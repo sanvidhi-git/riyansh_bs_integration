@@ -1,0 +1,17 @@
+{
+ "app": "riyansh_bs_integration",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon_type": "App",
+ "idx": 20,
+ "label": "Riyansh BS Integration",
+ "link": "/desk/riyansh-bs-integration",
+ "link_type": "External",
+ "logo_url": "/assets/riyansh_bs_integration/images/logo.svg",
+ "modified": "2026-09-22 10:00:00.000000",
+ "name": "Riyansh BS Integration",
+ "owner": "Administrator",
+ "roles": [],
+ "standard": 1
+}

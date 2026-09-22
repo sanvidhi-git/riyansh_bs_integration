@@ -1,0 +1,130 @@
+{
+ "app": "riyansh_bs_integration",
+ "charts": [],
+ "content": "[{\"id\":\"header_operations\",\"type\":\"header\",\"data\":{\"text\":\"<span class='h4'>Integration Operations</span>\",\"col\":12}},{\"id\":\"shortcut_onboarding\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Distributor Onboarding\",\"col\":4}},{\"id\":\"shortcut_api_logs\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"API Logs\",\"col\":4}},{\"id\":\"shortcut_outbound\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Outbound Events\",\"col\":4}},{\"id\":\"spacer_1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"header_setup\",\"type\":\"header\",\"data\":{\"text\":\"<span class='h4'>Setup</span>\",\"col\":12}},{\"id\":\"shortcut_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Integration Settings\",\"col\":4}}]",
+ "creation": "2026-09-22 10:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "integration",
+ "idx": 0,
+ "indicator_color": "blue",
+ "is_hidden": 0,
+ "label": "Riyansh BS Integration",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Operations",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Distributor Onboarding",
+   "link_count": 0,
+   "link_to": "BS Distributor Onboarding",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Monitoring",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "API Logs",
+   "link_count": 0,
+   "link_to": "BS API Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Outbound Events",
+   "link_count": 0,
+   "link_to": "BS Outbound Event",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Setup",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Integration Settings",
+   "link_count": 0,
+   "link_to": "BS Integration Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-22 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Riyansh BS Integration",
+ "name": "Riyansh BS Integration",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 1.0,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "label": "Distributor Onboarding",
+   "link_to": "BS Distributor Onboarding",
+   "stats_filter": "{}",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "API Logs",
+   "link_to": "BS API Log",
+   "stats_filter": "{}",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "label": "Outbound Events",
+   "link_to": "BS Outbound Event",
+   "stats_filter": "{}",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "",
+   "label": "Integration Settings",
+   "link_to": "BS Integration Settings",
+   "type": "DocType"
+  }
+ ],
+ "title": "Riyansh BS Integration"
+}
