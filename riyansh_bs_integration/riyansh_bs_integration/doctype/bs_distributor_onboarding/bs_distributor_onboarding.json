@@ -1,0 +1,34 @@
+{
+ "doctype":"DocType", "name":"BS Distributor Onboarding", "module":"Riyansh BS Integration", "autoname":"format:BS-ONB-{YYYY}-{#####}", "track_changes":1,
+ "field_order":["distributor_id","member_name","enterprise_name","mobile","email","date_of_birth","nominee_name","nominee_relationship","address_json","pan_number","aadhaar_number","aadhaar_hash","bank_name","branch_name","ifsc_code","account_number","account_hash","pan_card","aadhaar_front","aadhaar_back","cancelled_cheque","kyc_status","failure_reason_code","failure_reason","customer","supplier","verified_by","verified_at","outbound_status","source_created_at","correlation_id","request_fingerprint"],
+ "fields":[
+  {"fieldname":"distributor_id","label":"Distributor ID","fieldtype":"Data","reqd":1,"unique":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"member_name","label":"Member Name","fieldtype":"Data","reqd":1},
+  {"fieldname":"enterprise_name","label":"Enterprise Name","fieldtype":"Data"},
+  {"fieldname":"mobile","label":"Mobile","fieldtype":"Data","reqd":1,"unique":1}, {"fieldname":"email","label":"Email","fieldtype":"Data"},
+  {"fieldname":"date_of_birth","label":"Date of Birth","fieldtype":"Date","reqd":1},
+  {"fieldname":"nominee_name","label":"Nominee Name","fieldtype":"Data"}, {"fieldname":"nominee_relationship","label":"Nominee Relationship","fieldtype":"Data"},
+  {"fieldname":"address_json","label":"Address","fieldtype":"JSON","reqd":1},
+  {"fieldname":"pan_number","label":"PAN Number","fieldtype":"Data","reqd":1,"unique":1}, {"fieldname":"aadhaar_number","label":"Aadhaar Number","fieldtype":"Password","reqd":1},
+  {"fieldname":"aadhaar_hash","label":"Aadhaar Hash","fieldtype":"Data","hidden":1,"read_only":1,"unique":1},
+  {"fieldname":"bank_name","label":"Bank Name","fieldtype":"Data","reqd":1},
+  {"fieldname":"branch_name","label":"Branch Name","fieldtype":"Data"},
+  {"fieldname":"ifsc_code","label":"IFSC Code","fieldtype":"Data","reqd":1},
+  {"fieldname":"account_number","label":"Account Number","fieldtype":"Password","reqd":1},
+  {"fieldname":"account_hash","label":"Account Hash","fieldtype":"Data","hidden":1,"read_only":1,"unique":1},
+  {"fieldname":"pan_card","label":"PAN Card","fieldtype":"Attach","reqd":1}, {"fieldname":"aadhaar_front","label":"Aadhaar Front","fieldtype":"Attach","reqd":1},
+  {"fieldname":"aadhaar_back","label":"Aadhaar Back","fieldtype":"Attach","reqd":1}, {"fieldname":"cancelled_cheque","label":"Cancelled Cheque","fieldtype":"Attach","reqd":1},
+  {"fieldname":"kyc_status","label":"KYC Status","fieldtype":"Select","options":"Pending\nUnder Review\nPassed\nFailed","default":"Pending","in_list_view":1},
+  {"fieldname":"failure_reason_code","label":"Failure Reason Code","fieldtype":"Data"}, {"fieldname":"failure_reason","label":"Failure Reason","fieldtype":"Small Text"},
+  {"fieldname":"customer","label":"Customer","fieldtype":"Link","options":"Customer","read_only":1}, {"fieldname":"supplier","label":"Supplier","fieldtype":"Link","options":"Supplier","read_only":1},
+  {"fieldname":"verified_by","label":"Verified By","fieldtype":"Link","options":"User","read_only":1}, {"fieldname":"verified_at","label":"Verified At","fieldtype":"Datetime","read_only":1},
+  {"fieldname":"outbound_status","label":"KYC Delivery Status","fieldtype":"Select","options":"Not Queued\nQueued\nDelivered\nFailed","default":"Not Queued","read_only":1},
+  {"fieldname":"source_created_at","label":"Source Created At","fieldtype":"Datetime"}, {"fieldname":"correlation_id","label":"Correlation ID","fieldtype":"Data","read_only":1},
+  {"fieldname":"request_fingerprint","label":"Request Fingerprint","fieldtype":"Data","hidden":1,"read_only":1}
+ ],
+ "permissions":[
+  {"role":"System Manager","read":1,"write":1,"create":1},
+  {"role":"Riyansh KYC Verifier","read":1,"write":1},
+  {"role":"Riyansh KYC Approver","read":1,"write":1}
+ ]
+}

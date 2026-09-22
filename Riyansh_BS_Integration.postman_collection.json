@@ -1,0 +1,70 @@
+{
+  "info": {
+    "name": "Riyansh BS Integration - Test",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Test-only collection. API 2 is outbound from ERPNext to the BS-configured receiver URL."
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {"key": "key", "value": "Authorization", "type": "string"},
+      {"key": "value", "value": "token {{api_key}}:{{api_secret}}", "type": "string"},
+      {"key": "in", "value": "header", "type": "string"}
+    ]
+  },
+  "variable": [
+    {"key": "base_url", "value": "https://test.riyansh.sanvidhierp.in"},
+    {"key": "api_key", "value": ""},
+    {"key": "api_secret", "value": ""}
+  ],
+  "item": [
+    {
+      "name": "API 1 - Submit Distributor",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Accept", "value": "application/json"}],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {"key": "payload", "type": "text", "value": "{\"distributor_id\":\"TEST-RM-001\",\"member_name\":\"Test Member\",\"mobile\":\"9876543210\",\"date_of_birth\":\"2000-01-01\",\"pan_number\":\"ABCDE1234F\",\"aadhaar_number\":\"123412341234\",\"address\":{\"address_line_1\":\"Test Road\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411001\",\"country\":\"India\"},\"bank\":{\"bank_name\":\"Test Bank\",\"ifsc_code\":\"ABCD0001234\",\"account_number\":\"00123456789\"},\"source_created_at\":\"2026-09-22T10:00:00+05:30\"}"},
+            {"key": "pan_card", "type": "file", "src": []},
+            {"key": "aadhaar_front", "type": "file", "src": []},
+            {"key": "aadhaar_back", "type": "file", "src": []},
+            {"key": "cancelled_cheque", "type": "file", "src": []}
+          ]
+        },
+        "url": "{{base_url}}/api/method/riyansh_bs_integration.api.v1.distributor.submit"
+      },
+      "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test('201 or duplicate 200', () => pm.expect([200,201]).to.include(pm.response.code));","const response=pm.response.json(); const body=response.message || response; pm.expect(body.success).to.eql(true); pm.expect(body.correlation_id).to.exist;"]}}]
+    },
+    {
+      "name": "API 3 - Create Confirmed Order",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"},{"key":"Accept","value":"application/json"}],
+        "body": {"mode":"raw","raw":"{\n  \"bs_order_id\": \"TEST-ORD-001\",\n  \"distributor_id\": \"TEST-RM-001\",\n  \"order_datetime\": \"2026-09-22T12:00:00+05:30\",\n  \"warehouse_code\": \"SANGAMNER\",\n  \"currency\": \"INR\",\n  \"payment_status\": \"PAID\",\n  \"payment_reference\": \"TEST-PAY-001\",\n  \"shipping_address\": {\"name\":\"Test Member\",\"mobile\":\"9876543210\",\"address_line_1\":\"Test Road\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411001\"},\n  \"items\": [{\"item_code\":\"TEST-ITEM\",\"qty\":1,\"uom\":\"Nos\",\"rate\":100,\"discount_amount\":0,\"taxable_amount\":100,\"tax_amount\":18,\"line_total\":118}],\n  \"taxable_value\":100,\n  \"total_tax\":18,\n  \"shipping_amount\":0,\n  \"grand_total\":118\n}"},
+        "url": "{{base_url}}/api/method/riyansh_bs_integration.api.v1.order.create"
+      },
+      "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test('201 or duplicate 200', () => pm.expect([200,201]).to.include(pm.response.code));","const response=pm.response.json(); const body=response.message || response; pm.expect(body.success).to.eql(true); pm.expect(body.data.sales_order).to.exist;"]}}]
+    },
+    {
+      "name": "API 4 - Create Approved Credit Note",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"},{"key":"Accept","value":"application/json"}],
+        "body": {"mode":"raw","raw":"{\n  \"status\":\"APPROVED\",\n  \"bs_credit_note_id\":\"TEST-CN-001\",\n  \"bs_order_id\":\"TEST-ORD-001\",\n  \"distributor_id\":\"TEST-RM-001\",\n  \"original_invoice_reference\":\"TEST-SINV-001\",\n  \"credit_note_datetime\":\"2026-09-22T14:00:00+05:30\",\n  \"reason_code\":\"CUSTOMER_RETURN\",\n  \"reason\":\"Controlled UAT return\",\n  \"warehouse_code\":\"SANGAMNER\",\n  \"items\":[{\"item_code\":\"TEST-ITEM\",\"qty\":1,\"rate\":100,\"taxable_amount\":100,\"tax_amount\":18,\"line_total\":118}],\n  \"taxable_value\":100,\n  \"total_tax\":18,\n  \"grand_total\":118\n}"},
+        "url": "{{base_url}}/api/method/riyansh_bs_integration.api.v1.credit_note.create"
+      },
+      "event": [{"listen":"test","script":{"type":"text/javascript","exec":["pm.test('201 or duplicate 200', () => pm.expect([200,201]).to.include(pm.response.code));","const response=pm.response.json(); const body=response.message || response; pm.expect(body.success).to.eql(true); pm.expect(body.data.credit_note).to.exist;"]}}]
+    },
+    {
+      "name": "API 2 - KYC Result (Outbound Note)",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json","disabled":true}],
+        "body": {"mode":"raw","raw":"{\"note\":\"ERPNext sends the agreed PASS/FAIL payload to the BS URL configured in BS Integration Settings. Do not run this placeholder.\"}"},
+        "url": "https://example.invalid/bs-kyc-result"
+      }
+    }
+  ]
+}

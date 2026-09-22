@@ -1,0 +1,20 @@
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "riyansh_bs_integration"
+authors = [{name = "Sanvidhi Tech"}]
+description = "Four-flow Business Software integration for Riyansh"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = []
+
+[tool.flit.module]
+name = "riyansh_bs_integration"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
