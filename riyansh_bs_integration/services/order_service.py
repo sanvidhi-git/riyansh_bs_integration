@@ -59,6 +59,7 @@ def validate_order_payload(payload):
 
 def create_sales_order(payload, correlation_id):
     import frappe
+    from erpnext.accounts.services.taxes import TaxService
     payload = validate_order_payload(payload)
     fingerprint = request_fingerprint(payload)
     existing = frappe.db.get_value("Sales Order", {"custom_bs_order_id": payload["bs_order_id"]}, ["name", "custom_bs_request_fingerprint"], as_dict=True)
@@ -97,7 +98,7 @@ def create_sales_order(payload, correlation_id):
         doc.append("items", {"item_code":item["item_code"], "qty":item["qty"], "uom":item["uom"], "rate":item["rate"], "discount_amount":item.get("discount_amount", 0), "warehouse":warehouse})
     if settings.default_sales_taxes_and_charges_template:
         doc.taxes_and_charges = settings.default_sales_taxes_and_charges_template
-        doc.set_taxes()
+        TaxService(doc).set_taxes()
     try:
         doc.insert(ignore_permissions=True)
     except frappe.UniqueValidationError:

@@ -44,7 +44,7 @@ def validate_credit_note_payload(payload):
 
 def create_credit_note(payload, correlation_id):
     import frappe
-    from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
+    from erpnext.accounts.doctype.sales_invoice.mapper import make_sales_return
 
     payload = validate_credit_note_payload(payload)
     fingerprint = request_fingerprint(payload)
