@@ -1,10 +1,10 @@
 {
  "doctype":"DocType", "name":"BS Outbound Event", "module":"Riyansh BS Integration", "autoname":"format:BS-EVT-{YYYY}-{#####}", "track_changes":1,
- "field_order":["event_type","onboarding","target_url","payload","status","attempt_count","next_attempt_at","last_attempt_at","delivered_at","response_status","response_body","error_message","correlation_id"],
+ "field_order":["event_type","event_key","onboarding","target_url","payload","status","attempt_count","next_attempt_at","last_attempt_at","delivered_at","response_status","response_body","error_message","correlation_id"],
  "fields":[
-  {"fieldname":"event_type","label":"Event Type","fieldtype":"Data","reqd":1,"in_list_view":1}, {"fieldname":"onboarding","label":"Onboarding","fieldtype":"Link","options":"BS Distributor Onboarding","reqd":1},
+  {"fieldname":"event_type","label":"Event Type","fieldtype":"Data","reqd":1,"in_list_view":1}, {"fieldname":"event_key","label":"Event Key","fieldtype":"Data","unique":1,"read_only":1,"hidden":1}, {"fieldname":"onboarding","label":"Onboarding","fieldtype":"Link","options":"BS Distributor Onboarding","reqd":1},
   {"fieldname":"target_url","label":"Target URL","fieldtype":"Data","reqd":1}, {"fieldname":"payload","label":"Payload","fieldtype":"JSON","reqd":1},
-  {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Queued\nRetrying\nDelivered\nFailed","default":"Queued","in_list_view":1},
+  {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Queued\nProcessing\nRetrying\nDelivered\nFailed","default":"Queued","in_list_view":1},
   {"fieldname":"attempt_count","label":"Attempt Count","fieldtype":"Int","default":"0"}, {"fieldname":"next_attempt_at","label":"Next Attempt At","fieldtype":"Datetime"}, {"fieldname":"last_attempt_at","label":"Last Attempt At","fieldtype":"Datetime"}, {"fieldname":"delivered_at","label":"Delivered At","fieldtype":"Datetime"},
   {"fieldname":"response_status","label":"Response Status","fieldtype":"Int"}, {"fieldname":"response_body","label":"Response Body","fieldtype":"Long Text"}, {"fieldname":"error_message","label":"Error Message","fieldtype":"Small Text"}, {"fieldname":"correlation_id","label":"Correlation ID","fieldtype":"Data"}
  ],

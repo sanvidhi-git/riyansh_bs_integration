@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -19,12 +20,14 @@ def validate_order_payload(payload):
         raise IntegrationError("INVALID_JSON", "Request body must be a JSON object", 400)
     for field in ("bs_order_id", "distributor_id", "order_datetime", "warehouse_code", "currency", "payment_status", "shipping_address", "items"):
         require(payload, field)
+    payload = dict(payload)
     try:
         dt = datetime.fromisoformat(str(payload["order_datetime"]))
         if dt.tzinfo is None:
             raise ValueError
     except ValueError as exc:
         raise IntegrationError("INVALID_DATETIME", "order_datetime must include timezone", 422, field="order_datetime") from exc
+    payload["delivery_date"] = dt.date().isoformat()
     if not isinstance(payload["items"], list) or not payload["items"]:
         raise IntegrationError("EMPTY_ITEMS", "At least one item is required", 422, field="items")
     address = payload["shipping_address"]
@@ -77,6 +80,7 @@ def create_sales_order(payload, correlation_id):
     doc.currency = payload["currency"]
     doc.selling_price_list = settings.default_price_list
     doc.transaction_date = datetime.fromisoformat(payload["order_datetime"]).date()
+    doc.delivery_date = payload["delivery_date"]
     doc.custom_bs_order_id = payload["bs_order_id"]
     doc.custom_bs_payment_reference = payload.get("payment_reference")
     doc.custom_bs_source_datetime = payload["order_datetime"]
@@ -95,7 +99,7 @@ def create_sales_order(payload, correlation_id):
             available = Decimal(str(frappe.db.get_value("Bin", {"item_code": item["item_code"], "warehouse": warehouse}, "actual_qty") or 0))
             if available < Decimal(str(item["qty"])):
                 raise IntegrationError("INSUFFICIENT_STOCK", f"Insufficient stock for {item['item_code']}", 422, field="qty")
-        doc.append("items", {"item_code":item["item_code"], "qty":item["qty"], "uom":item["uom"], "rate":item["rate"], "discount_amount":item.get("discount_amount", 0), "warehouse":warehouse})
+        doc.append("items", {"item_code":item["item_code"], "qty":item["qty"], "uom":item["uom"], "rate":item["rate"], "discount_amount":item.get("discount_amount", 0), "warehouse":warehouse, "delivery_date":payload["delivery_date"]})
     if settings.default_sales_taxes_and_charges_template:
         doc.taxes_and_charges = settings.default_sales_taxes_and_charges_template
         TaxService(doc).set_taxes()
@@ -115,8 +119,22 @@ def create_sales_order(payload, correlation_id):
 
 
 def _resolve_warehouse(frappe, settings, code):
-    import json
-    mapping = json.loads(settings.warehouse_mapping_json or "{}")
+    try:
+        mapping = json.loads(settings.warehouse_mapping_json or "{}")
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise IntegrationError(
+            "INVALID_WAREHOUSE_MAPPING",
+            "Warehouse Mapping JSON is not valid JSON",
+            422,
+            field="warehouse_code",
+        ) from exc
+    if not isinstance(mapping, dict):
+        raise IntegrationError(
+            "INVALID_WAREHOUSE_MAPPING",
+            "Warehouse Mapping JSON must be an object",
+            422,
+            field="warehouse_code",
+        )
     warehouse = mapping.get(code)
     if not warehouse or not frappe.db.exists("Warehouse", warehouse):
         raise IntegrationError("WAREHOUSE_NOT_MAPPED", f"Warehouse code {code} is not mapped", 422, field="warehouse_code")

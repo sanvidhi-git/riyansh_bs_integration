@@ -19,7 +19,7 @@ SECRET_KEYS = {
     "signing_secret",
     "token",
 }
-PARTIAL_KEYS = {"aadhaar", "aadhaar_number", "account_number"}
+PARTIAL_KEYS = {"aadhaar", "aadhaar_number", "account_number", "mobile", "pan_number"}
 
 
 def _mask_tail(value, visible: int = 4) -> str:
@@ -70,6 +70,20 @@ def write_api_log(**values):
     return doc.name
 
 
+def _write_api_log_safely(**values):
+    """A logging failure must never replace the API's real response."""
+    try:
+        return write_api_log(**values)
+    except Exception:
+        try:
+            import frappe
+
+            frappe.log_error(title="Riyansh BS API log write failed")
+        except Exception:
+            pass
+        return None
+
+
 def integration_endpoint(interface: str, reference_key: str | None = None):
     """Wrap a whitelisted handler with access checks, envelopes and masked logging."""
 
@@ -86,7 +100,7 @@ def integration_endpoint(interface: str, reference_key: str | None = None):
             try:
                 require_integration_access()
                 result = function(*args, correlation_id=correlation_id, **kwargs)
-                write_api_log(
+                _write_api_log_safely(
                     interface=interface,
                     direction="Inbound",
                     correlation_id=correlation_id,
@@ -105,7 +119,7 @@ def integration_endpoint(interface: str, reference_key: str | None = None):
                 except (ImportError, AttributeError):
                     pass
                 result = failure(exc, correlation_id)
-                write_api_log(
+                _write_api_log_safely(
                     interface=interface,
                     direction="Inbound",
                     correlation_id=correlation_id,
@@ -134,7 +148,7 @@ def integration_endpoint(interface: str, reference_key: str | None = None):
                     pass
                 error = IntegrationError("INTERNAL_ERROR", "The request could not be processed", 500)
                 result = failure(error, correlation_id)
-                write_api_log(
+                _write_api_log_safely(
                     interface=interface,
                     direction="Inbound",
                     correlation_id=correlation_id,

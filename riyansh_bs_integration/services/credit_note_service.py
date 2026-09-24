@@ -21,6 +21,17 @@ def validate_credit_note_payload(payload):
         raise IntegrationError("RETURN_NOT_APPROVED", "Only APPROVED credit notes are accepted", 422, field="status")
     for field in ("bs_credit_note_id", "bs_order_id", "distributor_id", "original_invoice_reference", "credit_note_datetime", "reason_code", "reason", "warehouse_code", "items", "taxable_value", "total_tax", "grand_total"):
         require(payload, field)
+    try:
+        credit_note_datetime = datetime.fromisoformat(str(payload["credit_note_datetime"]))
+        if credit_note_datetime.tzinfo is None:
+            raise ValueError
+    except ValueError as exc:
+        raise IntegrationError(
+            "INVALID_DATETIME",
+            "credit_note_datetime must include timezone",
+            422,
+            field="credit_note_datetime",
+        ) from exc
     if not isinstance(payload["items"], list) or not payload["items"]:
         raise IntegrationError("EMPTY_ITEMS", "At least one credit-note item is required", 422, field="items")
     taxable = tax = total = Decimal("0")
@@ -53,6 +64,20 @@ def create_credit_note(payload, correlation_id):
         if existing.custom_bs_request_fingerprint != fingerprint:
             raise ConflictError("CREDIT_NOTE_ID_CONFLICT", "The BS credit-note ID already exists with different data", field="bs_credit_note_id")
         return {"credit_note": existing.name, "duplicate": True}, False
+    if not frappe.db.exists("Sales Invoice", payload["original_invoice_reference"]):
+        raise IntegrationError(
+            "INVOICE_NOT_FOUND",
+            "Original Sales Invoice does not exist",
+            404,
+            field="original_invoice_reference",
+        )
+    # Serialize all returns against the same invoice. This prevents two
+    # concurrent requests with different BS IDs from both consuming the same
+    # remaining quantity.
+    frappe.db.sql(
+        "select name from `tabSales Invoice` where name = %s for update",
+        (payload["original_invoice_reference"],),
+    )
     original = frappe.get_doc("Sales Invoice", payload["original_invoice_reference"])
     if original.docstatus != 1:
         raise IntegrationError("INVOICE_NOT_SUBMITTED", "Original Sales Invoice must be submitted", 422)
@@ -70,18 +95,24 @@ def create_credit_note(payload, correlation_id):
     for row in original.items:
         original_qty[row.item_code] = original_qty.get(row.item_code, Decimal("0")) + Decimal(str(row.qty))
         original_rates.setdefault(row.item_code, Decimal(str(row.rate)))
-    submitted_returns = frappe.get_all(
-        "Sales Invoice Item",
-        filters={"parenttype": "Sales Invoice", "docstatus": 1, "item_code": ["in", list(requested)]},
-        fields=["item_code", "qty", "parent"],
-    )
     return_parents = set(
         frappe.get_all(
             "Sales Invoice",
-            filters={"return_against": original.name, "docstatus": 1, "is_return": 1},
+            filters={"return_against": original.name, "docstatus": ["in", [0, 1]], "is_return": 1},
             pluck="name",
         )
     )
+    submitted_returns = []
+    if return_parents:
+        submitted_returns = frappe.get_all(
+            "Sales Invoice Item",
+            filters={
+                "parenttype": "Sales Invoice",
+                "parent": ["in", list(return_parents)],
+                "item_code": ["in", list(requested)],
+            },
+            fields=["item_code", "qty", "parent"],
+        )
     returned = {}
     for row in submitted_returns:
         if row.parent in return_parents:

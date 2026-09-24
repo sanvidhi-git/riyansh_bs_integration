@@ -31,6 +31,10 @@ def approve_kyc(onboarding_name: str, decision_user: str | None = None):
     from riyansh_bs_integration.core.outbound import queue_kyc_result
 
     _require_approver(frappe)
+    frappe.db.sql(
+        "select name from `tabBS Distributor Onboarding` where name = %s for update",
+        (onboarding_name,),
+    )
     doc = frappe.get_doc("BS Distributor Onboarding", onboarding_name)
     if doc.owner == (decision_user or frappe.session.user):
         raise PermissionDenied("The submitter cannot approve the same KYC record")
@@ -60,6 +64,10 @@ def reject_kyc(onboarding_name, reason_code, reason, decision_user=None):
     _require_approver(frappe)
     if not reason_code or not reason:
         raise IntegrationError("MISSING_FAILURE_REASON", "Failure reason code and reason are required", 422)
+    frappe.db.sql(
+        "select name from `tabBS Distributor Onboarding` where name = %s for update",
+        (onboarding_name,),
+    )
     doc = frappe.get_doc("BS Distributor Onboarding", onboarding_name)
     if doc.owner == (decision_user or frappe.session.user):
         raise PermissionDenied("The submitter cannot reject the same KYC record")
