@@ -4,7 +4,17 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from riyansh_bs_integration.core.errors import ConflictError, IntegrationError
-from riyansh_bs_integration.core.validation import require, request_fingerprint
+from riyansh_bs_integration.core.validation import require, request_fingerprint, to_database_datetime
+
+
+def _number(value, field):
+    try:
+        number = Decimal(str(value))
+        if not number.is_finite():
+            raise InvalidOperation
+        return number
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise IntegrationError("INVALID_AMOUNT", f"{field} is invalid", 422, field=field) from exc
 
 
 def remaining_return_quantity(original_qty, returned_quantities):
@@ -37,25 +47,27 @@ def validate_credit_note_payload(payload):
     taxable = tax = total = Decimal("0")
     for index, item in enumerate(payload["items"]):
         require(item, "item_code")
-        try:
-            qty = Decimal(str(require(item, "qty")))
-            rate = Decimal(str(require(item, "rate")))
-            item_taxable = Decimal(str(require(item, "taxable_amount")))
-            item_tax = Decimal(str(require(item, "tax_amount")))
-            item_total = Decimal(str(require(item, "line_total")))
-        except InvalidOperation as exc:
-            raise IntegrationError("INVALID_AMOUNT", "Credit-note amount is invalid", 422, field=f"items[{index}]") from exc
-        if qty <= 0 or rate < 0 or abs(item_total - item_taxable - item_tax) > Decimal("0.02"):
+        qty = _number(require(item, "qty"), f"items[{index}].qty")
+        rate = _number(require(item, "rate"), f"items[{index}].rate")
+        item_taxable = _number(require(item, "taxable_amount"), f"items[{index}].taxable_amount")
+        item_tax = _number(require(item, "tax_amount"), f"items[{index}].tax_amount")
+        item_total = _number(require(item, "line_total"), f"items[{index}].line_total")
+        if qty <= 0 or rate < 0 or item_taxable < 0 or item_tax < 0 or item_total < 0 or abs(item_total - item_taxable - item_tax) > Decimal("0.02"):
             raise IntegrationError("CREDIT_LINE_MISMATCH", "Credit-note line does not reconcile", 422, field=f"items[{index}]")
         taxable += item_taxable; tax += item_tax; total += item_total
-    if abs(taxable - Decimal(str(payload["taxable_value"]))) > Decimal("0.02") or abs(tax - Decimal(str(payload["total_tax"]))) > Decimal("0.02") or abs(total - Decimal(str(payload["grand_total"]))) > Decimal("0.02"):
+    taxable_value = _number(payload["taxable_value"], "taxable_value")
+    total_tax = _number(payload["total_tax"], "total_tax")
+    grand_total = _number(payload["grand_total"], "grand_total")
+    if taxable_value < 0 or total_tax < 0 or grand_total < 0:
+        raise IntegrationError("INVALID_AMOUNT", "Credit-note totals cannot be negative", 422)
+    if abs(taxable - taxable_value) > Decimal("0.02") or abs(tax - total_tax) > Decimal("0.02") or abs(total - grand_total) > Decimal("0.02"):
         raise IntegrationError("CREDIT_TOTAL_MISMATCH", "Credit-note totals do not reconcile", 422)
     return payload
 
 
 def create_credit_note(payload, correlation_id):
     import frappe
-    from erpnext.accounts.doctype.sales_invoice.mapper import make_sales_return
+    from frappe.utils import get_system_timezone
 
     payload = validate_credit_note_payload(payload)
     fingerprint = request_fingerprint(payload)
@@ -71,6 +83,7 @@ def create_credit_note(payload, correlation_id):
             404,
             field="original_invoice_reference",
         )
+    from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
     # Serialize all returns against the same invoice. This prevents two
     # concurrent requests with different BS IDs from both consuming the same
     # remaining quantity.
@@ -139,7 +152,9 @@ def create_credit_note(payload, correlation_id):
     credit.update_stock = 0
     credit.custom_bs_credit_note_id = payload["bs_credit_note_id"]
     credit.custom_bs_order_id = payload["bs_order_id"]
-    credit.custom_bs_source_datetime = payload["credit_note_datetime"]
+    credit.custom_bs_source_datetime = to_database_datetime(
+        payload["credit_note_datetime"], get_system_timezone(), "credit_note_datetime"
+    )
     credit.custom_bs_request_fingerprint = fingerprint
     credit.remarks = f"{payload['reason_code']}: {payload['reason']}"
     try:
