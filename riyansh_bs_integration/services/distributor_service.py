@@ -118,8 +118,13 @@ def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple
         existing = frappe.get_doc("BS Distributor Onboarding", existing_name)
         if existing.request_fingerprint == fingerprint:
             return _onboarding_result(existing), False
-        if existing.kyc_status == "Passed":
+        if existing.kyc_status in {"Passed", "Failed"}:
             existing.kyc_status = "Under Review"
+            existing.failure_reason_code = None
+            existing.failure_reason = None
+            existing.verified_by = None
+            existing.verified_at = None
+            existing.outbound_status = "Not Queued"
             existing.flags.kyc_service_update = True
         _apply_payload(existing, normalized, correlation_id, fingerprint)
         _save_documents(existing, files, save_file)
@@ -128,6 +133,11 @@ def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple
 
     doc = frappe.new_doc("BS Distributor Onboarding")
     _apply_payload(doc, normalized, correlation_id, fingerprint)
+    # A File cannot safely point at a parent that does not yet exist.  Create the
+    # parent inside the current request transaction, attach the private files,
+    # then perform the normal mandatory-field validation on save.  Any later
+    # exception is rolled back by the endpoint wrapper.
+    doc.flags.ignore_mandatory = True
     try:
         doc.insert(ignore_permissions=True)
     except frappe.UniqueValidationError:
@@ -135,6 +145,8 @@ def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple
         if winner and winner.request_fingerprint == fingerprint:
             return _onboarding_result(frappe.get_doc("BS Distributor Onboarding", winner.name)), False
         raise ConflictError("DISTRIBUTOR_ID_CONFLICT", "Distributor ID already exists with different data", field="distributor_id")
+    finally:
+        doc.flags.ignore_mandatory = False
     _save_documents(doc, files, save_file)
     doc.save(ignore_permissions=True)
     return _onboarding_result(doc), True

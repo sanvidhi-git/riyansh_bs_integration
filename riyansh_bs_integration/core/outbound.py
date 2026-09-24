@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from riyansh_bs_integration.core.errors import IntegrationError, PermissionDenied
+from riyansh_bs_integration.core.logging import safe_payload
 from riyansh_bs_integration.services.kyc_service import build_kyc_payload
 
 BACKOFF_SECONDS = (60, 300, 900, 3600)
@@ -42,11 +44,11 @@ def queue_kyc_result(onboarding_name: str):
         failure_reason_code=onboarding.failure_reason_code,
         failure_reason=onboarding.failure_reason,
     )
-    existing = frappe.db.get_value(
-        "BS Outbound Event",
-        {"event_type": "KYC_RESULT", "onboarding": onboarding.name},
-        "name",
-    )
+    serialized_payload = json.dumps(payload, separators=(",", ":"), default=str)
+    event_key = hashlib.sha256(
+        f"KYC_RESULT\n{onboarding.name}\n{serialized_payload}".encode("utf-8")
+    ).hexdigest()
+    existing = frappe.db.get_value("BS Outbound Event", {"event_key": event_key}, "name")
     if existing:
         return existing
     event = frappe.get_doc({
@@ -54,11 +56,15 @@ def queue_kyc_result(onboarding_name: str):
         "event_type": "KYC_RESULT",
         "onboarding": onboarding.name,
         "target_url": settings.kyc_result_url,
-        "payload": json.dumps(payload, separators=(",", ":"), default=str),
+        "payload": serialized_payload,
+        "event_key": event_key,
         "status": "Queued",
         "correlation_id": onboarding.correlation_id,
     })
-    event.insert(ignore_permissions=True)
+    try:
+        event.insert(ignore_permissions=True)
+    except frappe.UniqueValidationError:
+        return frappe.db.get_value("BS Outbound Event", {"event_key": event_key}, "name")
     frappe.enqueue(
         "riyansh_bs_integration.core.outbound.dispatch_event",
         event_name=event.name,
@@ -81,14 +87,13 @@ def dispatch_event(event_name: str, http_post=None):
     import requests
     from frappe.utils import now_datetime
 
+    if not _claim_event(event_name):
+        return frappe.db.get_value("BS Outbound Event", event_name, "status")
     event = frappe.get_doc("BS Outbound Event", event_name)
-    if event.status == "Delivered":
-        return "Delivered"
     settings = frappe.get_cached_doc("BS Integration Settings")
     maximum_attempts = int(settings.maximum_outbound_attempts or 5)
-    event.attempt_count = int(event.attempt_count or 0) + 1
-    event.last_attempt_at = now_datetime()
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    headers["Idempotency-Key"] = event.event_key
     authentication_type = settings.authentication_type
     if authentication_type == "Bearer Token":
         headers["Authorization"] = f"Bearer {settings.get_password('bearer_token')}"
@@ -104,7 +109,7 @@ def dispatch_event(event_name: str, http_post=None):
         )
         outcome = classify_response(response.status_code)
         event.response_status = response.status_code
-        event.response_body = (response.text or "")[:2000]
+        event.response_body = _safe_response_body(response.text)
         error_message = None
     except requests.RequestException as exc:
         outcome = "retry"
@@ -126,9 +131,67 @@ def dispatch_event(event_name: str, http_post=None):
     return event.status
 
 
-def process_due_events():
+def _claim_event(event_name: str) -> bool:
+    """Claim one event under a row lock so only one worker can send it."""
     import frappe
     from frappe.utils import now_datetime
+
+    rows = frappe.db.sql(
+        """select status, attempt_count
+           from `tabBS Outbound Event`
+           where name = %s for update""",
+        (event_name,),
+        as_dict=True,
+    )
+    if not rows or rows[0].status not in {"Queued", "Retrying"}:
+        return False
+    frappe.db.set_value(
+        "BS Outbound Event",
+        event_name,
+        {
+            "status": "Processing",
+            "attempt_count": int(rows[0].attempt_count or 0) + 1,
+            "last_attempt_at": now_datetime(),
+        },
+        update_modified=False,
+    )
+    # Release the row lock before doing network I/O. The durable Processing
+    # state prevents another worker from sending the same event concurrently.
+    frappe.db.commit()
+    return True
+
+
+def _safe_response_body(value) -> str:
+    text = value or ""
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return "[NON-JSON RESPONSE]" if text else ""
+    return json.dumps(safe_payload(parsed), ensure_ascii=False)[:2000]
+
+
+def process_due_events():
+    import frappe
+    from frappe.utils import add_to_date, now_datetime
+
+    # Recover a worker that died after claiming an event. The same stable
+    # Idempotency-Key is reused, allowing the BS receiver to deduplicate it.
+    stale_names = frappe.get_all(
+        "BS Outbound Event",
+        filters={
+            "status": "Processing",
+            "last_attempt_at": ["<=", add_to_date(now_datetime(), minutes=-10)],
+        },
+        pluck="name",
+        limit_page_length=100,
+    )
+    for name in stale_names:
+        frappe.db.set_value(
+            "BS Outbound Event",
+            name,
+            {"status": "Retrying", "next_attempt_at": now_datetime()},
+            update_modified=False,
+        )
 
     names = frappe.get_all(
         "BS Outbound Event",

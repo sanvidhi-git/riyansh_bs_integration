@@ -4,7 +4,7 @@ from frappe.model.document import Document
 
 class BSAPILog(Document):
     def on_update(self):
-        if not self.is_new():
+        if not getattr(self.flags, "in_insert", False):
             frappe.throw("BS API Log is append-only")
 
     def on_trash(self):
