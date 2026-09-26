@@ -5,13 +5,22 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from riyansh_bs_integration.core.errors import ConflictError, IntegrationError
-from riyansh_bs_integration.core.validation import require, request_fingerprint, validate_mobile, validate_pincode
+from riyansh_bs_integration.core.validation import (
+    require,
+    request_fingerprint,
+    to_database_datetime,
+    validate_mobile,
+    validate_pincode,
+)
 
 
 def _money(value, field):
     try:
-        return Decimal(str(value)).quantize(Decimal("0.01"))
-    except (InvalidOperation, TypeError) as exc:
+        amount = Decimal(str(value)).quantize(Decimal("0.01"))
+        if not amount.is_finite():
+            raise InvalidOperation
+        return amount
+    except (InvalidOperation, TypeError, ValueError) as exc:
         raise IntegrationError("INVALID_AMOUNT", f"{field} is invalid", 422, field=field) from exc
 
 
@@ -53,6 +62,13 @@ def validate_order_payload(payload):
         line_taxable += taxable; line_tax += tax; line_total += total
     taxable_value, total_tax, shipping = _money(require(payload, "taxable_value"), "taxable_value"), _money(require(payload, "total_tax"), "total_tax"), _money(payload.get("shipping_amount", 0), "shipping_amount")
     grand_total = _money(require(payload, "grand_total"), "grand_total")
+    if shipping < 0:
+        raise IntegrationError(
+            "INVALID_AMOUNT",
+            "shipping_amount cannot be negative",
+            422,
+            field="shipping_amount",
+        )
     if abs(line_taxable - taxable_value) > Decimal("0.02") or abs(line_tax - total_tax) > Decimal("0.02") or abs(grand_total - (taxable_value + total_tax + shipping)) > Decimal("0.02"):
         raise IntegrationError("ORDER_TOTAL_MISMATCH", "Order totals do not reconcile", 422)
     if str(payload["payment_status"]).upper() == "PAID" and not payload.get("payment_reference"):
@@ -62,7 +78,7 @@ def validate_order_payload(payload):
 
 def create_sales_order(payload, correlation_id):
     import frappe
-    from erpnext.accounts.services.taxes import TaxService
+    from frappe.utils import get_system_timezone
     payload = validate_order_payload(payload)
     fingerprint = request_fingerprint(payload)
     existing = frappe.db.get_value("Sales Order", {"custom_bs_order_id": payload["bs_order_id"]}, ["name", "custom_bs_request_fingerprint"], as_dict=True)
@@ -74,6 +90,7 @@ def create_sales_order(payload, correlation_id):
     if not onboarding or not onboarding.customer:
         raise IntegrationError("DISTRIBUTOR_NOT_VERIFIED", "Distributor is not KYC verified", 422, field="distributor_id")
     settings = frappe.get_cached_doc("BS Integration Settings")
+    _validate_order_configuration(frappe, settings, payload)
     warehouse = _resolve_warehouse(frappe, settings, payload["warehouse_code"])
     doc = frappe.new_doc("Sales Order")
     doc.company, doc.customer = settings.company, onboarding.customer
@@ -83,7 +100,9 @@ def create_sales_order(payload, correlation_id):
     doc.delivery_date = payload["delivery_date"]
     doc.custom_bs_order_id = payload["bs_order_id"]
     doc.custom_bs_payment_reference = payload.get("payment_reference")
-    doc.custom_bs_source_datetime = payload["order_datetime"]
+    doc.custom_bs_source_datetime = to_database_datetime(
+        payload["order_datetime"], get_system_timezone(), "order_datetime"
+    )
     doc.custom_bs_request_fingerprint = fingerprint
     doc.shipping_address_name = _get_or_create_shipping_address(frappe, onboarding.customer, payload)
     for item in payload["items"]:
@@ -101,8 +120,16 @@ def create_sales_order(payload, correlation_id):
                 raise IntegrationError("INSUFFICIENT_STOCK", f"Insufficient stock for {item['item_code']}", 422, field="qty")
         doc.append("items", {"item_code":item["item_code"], "qty":item["qty"], "uom":item["uom"], "rate":item["rate"], "discount_amount":item.get("discount_amount", 0), "warehouse":warehouse, "delivery_date":payload["delivery_date"]})
     if settings.default_sales_taxes_and_charges_template:
+        from erpnext.controllers.accounts_controller import get_taxes_and_charges
+
         doc.taxes_and_charges = settings.default_sales_taxes_and_charges_template
-        TaxService(doc).set_taxes()
+        taxes = get_taxes_and_charges(
+            "Sales Taxes and Charges Template",
+            settings.default_sales_taxes_and_charges_template,
+        )
+        for tax in taxes or []:
+            doc.append("taxes", tax)
+    _append_shipping_charge(doc, frappe, settings, payload.get("shipping_amount", 0))
     try:
         doc.insert(ignore_permissions=True)
     except frappe.UniqueValidationError:
@@ -116,6 +143,75 @@ def create_sales_order(payload, correlation_id):
     if settings.auto_submit_sales_order:
         doc.submit()
     return {"sales_order": doc.name, "duplicate": False, "docstatus": doc.docstatus}, True
+
+
+def _validate_order_configuration(frappe, settings, payload):
+    required = {
+        "company": "Company",
+        "default_price_list": "Default Price List",
+    }
+    for fieldname, label in required.items():
+        if not getattr(settings, fieldname, None):
+            raise IntegrationError(
+                "INTEGRATION_NOT_CONFIGURED",
+                f"{label} is not configured in BS Integration Settings",
+                503,
+                field=fieldname,
+            )
+    if not frappe.db.exists("Company", settings.company):
+        raise IntegrationError("COMPANY_NOT_FOUND", "Configured company does not exist", 503)
+    if not frappe.db.exists("Price List", settings.default_price_list):
+        raise IntegrationError("PRICE_LIST_NOT_FOUND", "Configured price list does not exist", 503)
+    if not frappe.db.exists("Currency", payload["currency"]):
+        raise IntegrationError("CURRENCY_NOT_FOUND", "Currency does not exist", 422, field="currency")
+    template = getattr(settings, "default_sales_taxes_and_charges_template", None)
+    if template and not frappe.db.exists("Sales Taxes and Charges Template", template):
+        raise IntegrationError(
+            "TAX_TEMPLATE_NOT_FOUND",
+            "Configured sales tax template does not exist",
+            503,
+        )
+
+
+def _append_shipping_charge(doc, frappe, settings, shipping_amount):
+    amount = _money(shipping_amount or 0, "shipping_amount")
+    if amount == 0:
+        return
+    account = getattr(settings, "shipping_charge_account", None)
+    if not account:
+        raise IntegrationError(
+            "SHIPPING_ACCOUNT_NOT_CONFIGURED",
+            "Shipping Charge Account is required for orders with shipping amount",
+            503,
+            field="shipping_amount",
+        )
+    account_row = frappe.db.get_value(
+        "Account",
+        account,
+        ["name", "company", "is_group", "disabled"],
+        as_dict=True,
+    )
+    if not account_row or account_row.is_group or account_row.disabled:
+        raise IntegrationError(
+            "INVALID_SHIPPING_ACCOUNT",
+            "Configured shipping charge account is unavailable",
+            503,
+        )
+    if account_row.company != settings.company:
+        raise IntegrationError(
+            "INVALID_SHIPPING_ACCOUNT",
+            "Shipping charge account does not belong to the configured company",
+            503,
+        )
+    doc.append(
+        "taxes",
+        {
+            "charge_type": "Actual",
+            "account_head": account,
+            "description": "Shipping Charges",
+            "tax_amount": float(amount),
+        },
+    )
 
 
 def _resolve_warehouse(frappe, settings, code):
@@ -136,8 +232,20 @@ def _resolve_warehouse(frappe, settings, code):
             field="warehouse_code",
         )
     warehouse = mapping.get(code)
-    if not warehouse or not frappe.db.exists("Warehouse", warehouse):
+    warehouse_row = None
+    if warehouse:
+        warehouse_row = frappe.db.get_value(
+            "Warehouse",
+            warehouse,
+            ["name", "company", "is_group", "disabled"],
+            as_dict=True,
+        )
+    if not warehouse_row:
         raise IntegrationError("WAREHOUSE_NOT_MAPPED", f"Warehouse code {code} is not mapped", 422, field="warehouse_code")
+    if warehouse_row.is_group or warehouse_row.disabled:
+        raise IntegrationError("WAREHOUSE_UNAVAILABLE", f"Warehouse {warehouse} is unavailable", 422, field="warehouse_code")
+    if warehouse_row.company and warehouse_row.company != settings.company:
+        raise IntegrationError("WAREHOUSE_COMPANY_MISMATCH", f"Warehouse {warehouse} belongs to another company", 422, field="warehouse_code")
     return warehouse
 
 

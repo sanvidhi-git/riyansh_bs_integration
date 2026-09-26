@@ -8,10 +8,16 @@ from types import SimpleNamespace
 from riyansh_bs_integration.core.errors import IntegrationError
 from riyansh_bs_integration.core.logging import redact
 from riyansh_bs_integration.core.outbound import queue_kyc_result
+from riyansh_bs_integration.core.validation import to_database_datetime
 from riyansh_bs_integration.services.credit_note_service import create_credit_note
 from riyansh_bs_integration.services.credit_note_service import validate_credit_note_payload
 from riyansh_bs_integration.services.distributor_service import REQUIRED_FILES, submit_distributor
-from riyansh_bs_integration.services.order_service import _resolve_warehouse, validate_order_payload
+from riyansh_bs_integration.services.order_service import (
+    _append_shipping_charge,
+    _resolve_warehouse,
+    create_sales_order,
+    validate_order_payload,
+)
 
 
 class _Upload:
@@ -48,6 +54,15 @@ class _NewOnboarding:
 
 
 class TestRuntimeRegressions(unittest.TestCase):
+    def test_timezone_datetime_is_converted_to_frappe_database_format(self):
+        converted = to_database_datetime(
+            "2026-09-24T10:00:00+00:00",
+            "Asia/Kolkata",
+            "source_created_at",
+        )
+        self.assertIsNone(converted.tzinfo)
+        self.assertEqual(converted.isoformat(sep=" "), "2026-09-24 15:30:00")
+
     def test_new_distributor_inserts_parent_before_attaching_files(self):
         document = _NewOnboarding()
 
@@ -69,6 +84,7 @@ class TestRuntimeRegressions(unittest.TestCase):
 
         file_manager.save_file = save_file
         frappe_utils = types.ModuleType("frappe.utils")
+        frappe_utils.get_system_timezone = lambda: "Asia/Kolkata"
 
         payload = {
             "distributor_id": "TEST-RM-001",
@@ -226,12 +242,93 @@ class TestRuntimeRegressions(unittest.TestCase):
         result = validate_order_payload(payload)
         self.assertEqual(result["delivery_date"], "2026-09-24")
 
+    def test_unverified_distributor_is_rejected_before_tax_dependencies(self):
+        payload = {
+            "bs_order_id": "BS-NEG-1",
+            "distributor_id": "RM-NOT-VERIFIED",
+            "order_datetime": "2026-09-24T10:00:00+05:30",
+            "warehouse_code": "SANGAMNER",
+            "currency": "INR",
+            "payment_status": "PAID",
+            "payment_reference": "PAY-1",
+            "shipping_address": {
+                "name": "A",
+                "mobile": "9876543210",
+                "address_line_1": "Road",
+                "city": "Pune",
+                "state": "Maharashtra",
+                "pincode": "411001",
+            },
+            "items": [
+                {
+                    "item_code": "ITEM-1",
+                    "qty": 1,
+                    "uom": "Nos",
+                    "rate": 100,
+                    "taxable_amount": 100,
+                    "tax_amount": 0,
+                    "line_total": 100,
+                }
+            ],
+            "taxable_value": 100,
+            "total_tax": 0,
+            "shipping_amount": 0,
+            "grand_total": 100,
+        }
+
+        class _DB:
+            @staticmethod
+            def get_value(doctype, filters, fields=None, as_dict=False):
+                return None
+
+        fake_frappe = types.ModuleType("frappe")
+        fake_frappe.db = _DB()
+        fake_utils = types.ModuleType("frappe.utils")
+        fake_utils.get_system_timezone = lambda: "Asia/Kolkata"
+        saved_modules = {name: sys.modules.get(name) for name in ("frappe", "frappe.utils")}
+        try:
+            sys.modules["frappe"] = fake_frappe
+            sys.modules["frappe.utils"] = fake_utils
+            with self.assertRaises(IntegrationError) as raised:
+                create_sales_order(payload, "COR-TEST")
+        finally:
+            for name, module in saved_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+        self.assertEqual(raised.exception.code, "DISTRIBUTOR_NOT_VERIFIED")
+
     def test_invalid_warehouse_mapping_returns_contract_error(self):
         fake_frappe = SimpleNamespace()
         settings = SimpleNamespace(warehouse_mapping_json="{not-json")
         with self.assertRaises(IntegrationError) as raised:
             _resolve_warehouse(fake_frappe, settings, "SANGAMNER")
         self.assertEqual(raised.exception.code, "INVALID_WAREHOUSE_MAPPING")
+
+    def test_nonzero_shipping_requires_configured_account(self):
+        settings = SimpleNamespace(shipping_charge_account=None, company="Test Company")
+        with self.assertRaises(IntegrationError) as raised:
+            _append_shipping_charge(SimpleNamespace(), SimpleNamespace(), settings, 10)
+        self.assertEqual(raised.exception.code, "SHIPPING_ACCOUNT_NOT_CONFIGURED")
+
+    def test_shipping_charge_is_added_as_actual_tax_row(self):
+        appended = []
+
+        class _DB:
+            @staticmethod
+            def get_value(doctype, name, fields, as_dict=False):
+                return SimpleNamespace(name=name, company="Test Company", is_group=0, disabled=0)
+
+        doc = SimpleNamespace(append=lambda table, row: appended.append((table, row)))
+        settings = SimpleNamespace(
+            shipping_charge_account="Shipping Charges - TC",
+            company="Test Company",
+        )
+        _append_shipping_charge(doc, SimpleNamespace(db=_DB()), settings, 25)
+        self.assertEqual(appended[0][0], "taxes")
+        self.assertEqual(appended[0][1]["charge_type"], "Actual")
+        self.assertEqual(appended[0][1]["tax_amount"], 25.0)
 
     def test_credit_note_datetime_requires_timezone(self):
         payload = {
@@ -299,22 +396,28 @@ class TestRuntimeRegressions(unittest.TestCase):
 
         fake_frappe = types.ModuleType("frappe")
         fake_frappe.db = _DB()
-        fake_mapper = types.ModuleType("erpnext.accounts.doctype.sales_invoice.mapper")
-        fake_mapper.make_sales_return = lambda name: None
+        fake_sales_invoice = types.ModuleType(
+            "erpnext.accounts.doctype.sales_invoice.sales_invoice"
+        )
+        fake_sales_invoice.make_sales_return = lambda name: None
+        fake_utils = types.ModuleType("frappe.utils")
+        fake_utils.get_system_timezone = lambda: "Asia/Kolkata"
         module_names = (
             "frappe",
+            "frappe.utils",
             "erpnext",
             "erpnext.accounts",
             "erpnext.accounts.doctype",
             "erpnext.accounts.doctype.sales_invoice",
-            "erpnext.accounts.doctype.sales_invoice.mapper",
+            "erpnext.accounts.doctype.sales_invoice.sales_invoice",
         )
         saved_modules = {name: sys.modules.get(name) for name in module_names}
         try:
             sys.modules["frappe"] = fake_frappe
-            for name in module_names[1:-1]:
+            sys.modules["frappe.utils"] = fake_utils
+            for name in module_names[2:-1]:
                 sys.modules[name] = types.ModuleType(name)
-            sys.modules[module_names[-1]] = fake_mapper
+            sys.modules[module_names[-1]] = fake_sales_invoice
             with self.assertRaises(IntegrationError) as raised:
                 create_credit_note(payload, "COR-TEST")
         finally:

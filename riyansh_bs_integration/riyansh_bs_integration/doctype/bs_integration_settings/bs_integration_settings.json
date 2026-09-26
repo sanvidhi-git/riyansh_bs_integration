@@ -1,7 +1,7 @@
 {
  "doctype": "DocType", "name": "BS Integration Settings", "module": "Riyansh BS Integration",
  "issingle": 1, "track_changes": 1,
- "field_order": ["integration_enabled", "inbound_enabled", "kyc_outbound_enabled", "environment", "company", "default_customer_group", "default_supplier_group", "default_territory", "default_price_list", "default_sales_taxes_and_charges_template", "default_warehouse", "warehouse_mapping_json", "price_tolerance_percent", "amount_tolerance", "kyc_result_url", "authentication_type", "bearer_token", "api_key", "api_secret", "allowed_ips", "maximum_document_size_mb", "auto_submit_sales_order", "auto_submit_credit_note", "maximum_outbound_attempts", "request_timeout_seconds"],
+ "field_order": ["integration_enabled", "inbound_enabled", "kyc_outbound_enabled", "environment", "company", "default_customer_group", "default_supplier_group", "default_territory", "default_price_list", "default_sales_taxes_and_charges_template", "shipping_charge_account", "default_warehouse", "warehouse_mapping_json", "price_tolerance_percent", "amount_tolerance", "kyc_result_url", "authentication_type", "bearer_token", "api_key", "api_secret", "allowed_ips", "maximum_document_size_mb", "auto_submit_sales_order", "auto_submit_credit_note", "maximum_outbound_attempts", "request_timeout_seconds"],
  "fields": [
   {"fieldname":"integration_enabled","label":"Integration Enabled","fieldtype":"Check","default":"0"},
   {"fieldname":"inbound_enabled","label":"Inbound Enabled","fieldtype":"Check","default":"0"},
@@ -13,6 +13,7 @@
   {"fieldname":"default_territory","label":"Default Territory","fieldtype":"Link","options":"Territory"},
   {"fieldname":"default_price_list","label":"Default Price List","fieldtype":"Link","options":"Price List"},
   {"fieldname":"default_sales_taxes_and_charges_template","label":"Default Sales Taxes and Charges Template","fieldtype":"Link","options":"Sales Taxes and Charges Template"},
+  {"fieldname":"shipping_charge_account","label":"Shipping Charge Account","fieldtype":"Link","options":"Account"},
   {"fieldname":"default_warehouse","label":"Default Warehouse","fieldtype":"Link","options":"Warehouse"},
   {"fieldname":"warehouse_mapping_json","label":"Warehouse Mapping JSON","fieldtype":"Code","options":"JSON"},
   {"fieldname":"price_tolerance_percent","label":"Price Tolerance (%)","fieldtype":"Float","default":"0"},

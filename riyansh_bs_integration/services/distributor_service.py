@@ -13,6 +13,7 @@ from riyansh_bs_integration.core.validation import (
     validate_mobile,
     validate_pan,
     validate_pincode,
+    to_database_datetime,
 )
 
 ALLOWED_DOCUMENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
@@ -106,9 +107,13 @@ def validate_documents(files: dict, max_size_mb: int = 5) -> dict[str, str]:
 
 def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple[dict, bool]:
     import frappe
+    from frappe.utils import get_system_timezone
     from frappe.utils.file_manager import save_file
 
     normalized = validate_distributor_payload(payload)
+    normalized["source_created_at"] = to_database_datetime(
+        normalized["source_created_at"], get_system_timezone(), "source_created_at"
+    )
     settings = frappe.get_cached_doc("BS Integration Settings")
     document_digests = validate_documents(files, int(settings.maximum_document_size_mb or 5))
     fingerprint = request_fingerprint({"payload": normalized, "documents": document_digests})

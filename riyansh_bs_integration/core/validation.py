@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from riyansh_bs_integration.core.errors import IntegrationError
 
@@ -11,6 +13,22 @@ AADHAAR_RE = re.compile(r"^[0-9]{12}$")
 IFSC_RE = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
 MOBILE_RE = re.compile(r"^[6-9][0-9]{9}$")
 PINCODE_RE = re.compile(r"^[1-9][0-9]{5}$")
+
+
+def to_database_datetime(value, system_timezone: str, field: str):
+    """Convert an ISO-8601 instant to Frappe's timezone-naive DB datetime."""
+    try:
+        parsed = datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            raise ValueError
+        return parsed.astimezone(ZoneInfo(system_timezone)).replace(tzinfo=None)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise IntegrationError(
+            "INVALID_DATETIME",
+            f"{field} must be ISO-8601 with timezone",
+            422,
+            field=field,
+        ) from exc
 
 
 def request_fingerprint(payload) -> str:

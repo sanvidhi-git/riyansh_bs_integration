@@ -11,6 +11,69 @@ from riyansh_bs_integration.services.credit_note_service import remaining_return
 
 
 class TestPayloadContracts(unittest.TestCase):
+    @staticmethod
+    def valid_order_payload():
+        return {
+            "bs_order_id": "BS-1",
+            "distributor_id": "RM1",
+            "order_datetime": "2026-09-22T10:00:00+05:30",
+            "warehouse_code": "SANGAMNER",
+            "currency": "INR",
+            "payment_status": "PAID",
+            "payment_reference": "PAY-1",
+            "shipping_address": {
+                "name": "A",
+                "mobile": "9876543210",
+                "address_line_1": "Road",
+                "city": "Mouda",
+                "state": "Maharashtra",
+                "pincode": "441104",
+            },
+            "items": [
+                {
+                    "item_code": "ITEM-1",
+                    "qty": 1,
+                    "uom": "Nos",
+                    "rate": 100,
+                    "discount_amount": 0,
+                    "taxable_amount": 100,
+                    "tax_amount": 0,
+                    "line_total": 100,
+                }
+            ],
+            "taxable_value": 100,
+            "total_tax": 0,
+            "shipping_amount": 0,
+            "grand_total": 100,
+        }
+
+    @staticmethod
+    def valid_credit_payload():
+        return {
+            "status": "APPROVED",
+            "bs_credit_note_id": "CN-1",
+            "bs_order_id": "BS-1",
+            "distributor_id": "RM1",
+            "original_invoice_reference": "SINV-1",
+            "credit_note_datetime": "2026-09-22T10:00:00+05:30",
+            "reason_code": "CUSTOMER_RETURN",
+            "reason": "Test return",
+            "warehouse_code": "SANGAMNER",
+            "items": [
+                {
+                    "item_code": "ITEM-1",
+                    "qty": 1,
+                    "rate": 100,
+                    "taxable_amount": 100,
+                    "tax_amount": 0,
+                    "line_total": 100,
+                }
+            ],
+            "taxable_value": 100,
+            "total_tax": 0,
+            "grand_total": 100,
+        }
+
     def test_valid_distributor_is_normalized(self):
         payload = {
             "distributor_id": " RM6110738 ", "member_name": " Sample Member ",
@@ -36,9 +99,38 @@ class TestPayloadContracts(unittest.TestCase):
         with self.assertRaises(IntegrationError):
             validate_order_payload(payload)
 
+    def test_order_rejects_non_finite_amounts_as_contract_error(self):
+        payload = self.valid_order_payload()
+        payload["items"][0]["rate"] = "NaN"
+        with self.assertRaises(IntegrationError) as raised:
+            validate_order_payload(payload)
+        self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
+
+    def test_order_rejects_negative_shipping_amount(self):
+        payload = self.valid_order_payload()
+        payload["shipping_amount"] = -10
+        payload["grand_total"] = 90
+        with self.assertRaises(IntegrationError) as raised:
+            validate_order_payload(payload)
+        self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
+
     def test_credit_note_requires_approved_status(self):
         with self.assertRaises(IntegrationError):
             validate_credit_note_payload({"status": "PENDING"})
+
+    def test_credit_note_rejects_non_finite_amounts_as_contract_error(self):
+        payload = self.valid_credit_payload()
+        payload["items"][0]["tax_amount"] = "NaN"
+        with self.assertRaises(IntegrationError) as raised:
+            validate_credit_note_payload(payload)
+        self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
+
+    def test_credit_note_rejects_invalid_header_totals_as_contract_error(self):
+        payload = self.valid_credit_payload()
+        payload["grand_total"] = "not-a-number"
+        with self.assertRaises(IntegrationError) as raised:
+            validate_credit_note_payload(payload)
+        self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
 
     def test_kyc_pass_payload_has_both_party_ids(self):
         result = build_kyc_payload(
