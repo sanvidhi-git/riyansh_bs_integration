@@ -70,6 +70,20 @@ class TestFrontendAppRegistration(unittest.TestCase):
         self.assertEqual(icon["logo_url"], "/assets/riyansh_bs_integration/images/logo.svg")
         self.assertEqual(icon["standard"], 1)
 
+    def test_onboarding_form_has_kyc_decision_buttons_and_no_send_button(self):
+        script_path = (
+            MODULE_ROOT
+            / "doctype"
+            / "bs_distributor_onboarding"
+            / "bs_distributor_onboarding.js"
+        )
+        source = script_path.read_text(encoding="utf-8")
+        self.assertIn("Approve KYC", source)
+        self.assertIn("Reject KYC", source)
+        self.assertIn("reason_code", source)
+        self.assertNotIn("Send to BS", source)
+
+
 
 class TestFrontendAppPermissions(unittest.TestCase):
     def _permission_result(self, user, roles):

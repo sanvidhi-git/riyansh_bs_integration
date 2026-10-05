@@ -76,17 +76,59 @@ class TestPayloadContracts(unittest.TestCase):
 
     def test_valid_distributor_is_normalized(self):
         payload = {
-            "distributor_id": " RM6110738 ", "member_name": " Sample Member ",
-            "mobile": "9876543210", "date_of_birth": "2000-08-03",
-            "pan_number": "abcde1234f", "aadhaar_number": "1234 1234 1234",
-            "address": {"address_line_1": "Road", "city": "Mouda", "state": "Maharashtra", "pincode": "441104", "country": "India"},
-            "bank": {"bank_name": "Sample Bank", "ifsc_code": "abcd0001234", "account_number": "0012345"},
-            "source_created_at": "2026-09-22T09:30:00+05:30"
+            "distributor_id": " RM6110738 ",
+            "member_name": " Sample Member ",
+            "mobile": "9876543210",
+            "email": "member@example.com",
+            "date_of_birth": "2000-08-03",
+            "pan_number": "abcde1234f",
+            "aadhaar_number": "1234 1234 1234",
         }
         result = validate_distributor_payload(payload)
         self.assertEqual(result["distributor_id"], "RM6110738")
+        self.assertEqual(result["member_name"], "Sample Member")
+        self.assertEqual(result["email"], "member@example.com")
         self.assertEqual(result["pan_number"], "ABCDE1234F")
+        self.assertNotIn("address", result)
+        self.assertNotIn("bank", result)
+        self.assertNotIn("source_created_at", result)
+
+    def test_distributor_optional_legacy_fields_are_accepted_when_present(self):
+        payload = {
+            "distributor_id": "RM6110738",
+            "member_name": "Sample Member",
+            "mobile": "9876543210",
+            "email": "member@example.com",
+            "date_of_birth": "2000-08-03",
+            "pan_number": "ABCDE1234F",
+            "aadhaar_number": "123412341234",
+            "address": {"address_line_1": "Road", "city": "Mouda", "state": "Maharashtra", "pincode": "441104", "country": "India"},
+            "bank": {"bank_name": "Sample Bank", "ifsc_code": "ABCD0001234", "account_number": "0012345"},
+            "source_created_at": "2026-09-22T09:30:00+05:30",
+        }
+        result = validate_distributor_payload(payload)
+        self.assertEqual(result["address"]["pincode"], "441104")
         self.assertEqual(result["bank"]["account_number"], "0012345")
+        self.assertEqual(result["source_created_at"], "2026-09-22T09:30:00+05:30")
+
+    def test_distributor_requires_exact_current_contract_fields(self):
+        base = {
+            "distributor_id": "RM6110738",
+            "member_name": "Sample Member",
+            "mobile": "9876543210",
+            "email": "member@example.com",
+            "date_of_birth": "2000-08-03",
+            "pan_number": "ABCDE1234F",
+            "aadhaar_number": "123412341234",
+        }
+        for field in base:
+            with self.subTest(field=field):
+                payload = dict(base)
+                payload.pop(field)
+                with self.assertRaises(IntegrationError) as raised:
+                    validate_distributor_payload(payload)
+                self.assertEqual(raised.exception.code, "REQUIRED_FIELD")
+                self.assertEqual(raised.exception.field, field)
 
     def test_order_rejects_mismatched_grand_total(self):
         payload = {
@@ -132,18 +174,41 @@ class TestPayloadContracts(unittest.TestCase):
             validate_credit_note_payload(payload)
         self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
 
-    def test_kyc_pass_payload_has_both_party_ids(self):
+    def test_kyc_pass_payload_has_only_agreed_fields(self):
         result = build_kyc_payload(
-            distributor_id="RM1", status="PASS", verified_at="2026-09-22T11:30:00+05:30",
-            customer="CUST-1", supplier="SUPP-1"
+            distributor_id="RM1",
+            status="PASS",
+            verified_at="2026-09-22T11:30:00+05:30",
         )
-        self.assertEqual(result["erp_customer_id"], "CUST-1")
-        self.assertEqual(result["erp_supplier_id"], "SUPP-1")
+        self.assertEqual(
+            set(result),
+            {"distributor_id", "verification_status", "failure_reason_code", "failure_reason", "verified_at"},
+        )
+        self.assertEqual(result["verification_status"], "PASS")
+        self.assertIsNone(result["failure_reason_code"])
         self.assertIsNone(result["failure_reason"])
+        self.assertNotIn("erp_customer_id", result)
+        self.assertNotIn("erp_supplier_id", result)
 
     def test_kyc_fail_requires_reason(self):
         with self.assertRaises(IntegrationError):
             build_kyc_payload(distributor_id="RM1", status="FAIL", verified_at="2026-09-22T11:30:00+05:30")
+
+    def test_kyc_fail_payload_has_only_agreed_fields_and_reason(self):
+        result = build_kyc_payload(
+            distributor_id="RM1",
+            status="FAIL",
+            verified_at="2026-09-22T11:30:00+05:30",
+            failure_reason_code="PAN_MISMATCH",
+            failure_reason="PAN details do not match",
+        )
+        self.assertEqual(
+            set(result),
+            {"distributor_id", "verification_status", "failure_reason_code", "failure_reason", "verified_at"},
+        )
+        self.assertEqual(result["verification_status"], "FAIL")
+        self.assertEqual(result["failure_reason_code"], "PAN_MISMATCH")
+        self.assertEqual(result["failure_reason"], "PAN details do not match")
 
     def test_cumulative_return_quantity_never_goes_below_zero(self):
         self.assertEqual(remaining_return_quantity(10, [2, 3]), 5)

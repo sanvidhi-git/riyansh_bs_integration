@@ -39,8 +39,6 @@ def queue_kyc_result(onboarding_name: str):
         distributor_id=onboarding.distributor_id,
         status=status,
         verified_at=_iso_system_datetime(onboarding.verified_at),
-        customer=onboarding.customer,
-        supplier=onboarding.supplier,
         failure_reason_code=onboarding.failure_reason_code,
         failure_reason=onboarding.failure_reason,
     )

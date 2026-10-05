@@ -36,6 +36,17 @@ class TestSchemaFiles(unittest.TestCase):
         self.assertTrue(expected.issubset(actual))
         self.assertEqual(len(actual), sum(len(fields) for fields in CUSTOM_FIELDS.values()))
 
+    def test_api1_schema_matches_current_required_contract(self):
+        schema = json.loads(
+            (ROOT / "riyansh_bs_integration/doctype/bs_distributor_onboarding/bs_distributor_onboarding.json").read_text()
+        )
+        fields = {field["fieldname"]: field for field in schema["fields"]}
+        for field in ("distributor_id", "member_name", "mobile", "email", "date_of_birth", "pan_number", "aadhaar_number", "pan_card", "aadhaar_front", "aadhaar_back", "cancelled_cheque"):
+            self.assertEqual(fields[field].get("reqd"), 1, field)
+        for field in ("address_json", "bank_name", "ifsc_code", "account_number", "source_created_at"):
+            self.assertNotEqual(fields[field].get("reqd"), 1, field)
+
+
 
 if __name__ == "__main__":
     unittest.main()

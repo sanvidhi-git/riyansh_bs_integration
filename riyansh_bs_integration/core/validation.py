@@ -13,6 +13,7 @@ AADHAAR_RE = re.compile(r"^[0-9]{12}$")
 IFSC_RE = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
 MOBILE_RE = re.compile(r"^[6-9][0-9]{9}$")
 PINCODE_RE = re.compile(r"^[1-9][0-9]{5}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def to_database_datetime(value, system_timezone: str, field: str):
@@ -72,6 +73,13 @@ def validate_mobile(value: str) -> str:
         normalized = normalized[2:]
     if not MOBILE_RE.fullmatch(normalized):
         raise IntegrationError("INVALID_MOBILE", "Mobile number format is invalid", 422, field="mobile")
+    return normalized
+
+
+def validate_email(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not EMAIL_RE.fullmatch(normalized):
+        raise IntegrationError("INVALID_EMAIL", "Email address format is invalid", 422, field="email")
     return normalized
 
 
