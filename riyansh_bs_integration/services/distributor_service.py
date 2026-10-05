@@ -9,6 +9,7 @@ from riyansh_bs_integration.core.validation import (
     request_fingerprint,
     require,
     validate_aadhaar,
+    validate_email,
     validate_ifsc,
     validate_mobile,
     validate_pan,
@@ -40,29 +41,48 @@ def _iso_datetime(value, field):
 def validate_distributor_payload(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise IntegrationError("INVALID_JSON", "payload must be a JSON object", 400, field="payload")
-    address = require(payload, "address")
-    bank = require(payload, "bank")
-    if not isinstance(address, dict) or not isinstance(bank, dict):
-        raise IntegrationError("INVALID_OBJECT", "address and bank must be objects", 422)
 
-    normalized = dict(payload)
-    normalized["distributor_id"] = str(require(payload, "distributor_id")).strip()
-    normalized["member_name"] = str(require(payload, "member_name")).strip()
-    normalized["mobile"] = validate_mobile(require(payload, "mobile"))
-    normalized["date_of_birth"] = _iso_date(require(payload, "date_of_birth"), "date_of_birth")
-    normalized["pan_number"] = validate_pan(require(payload, "pan_number"))
-    normalized["aadhaar_number"] = validate_aadhaar(require(payload, "aadhaar_number"))
-    normalized["source_created_at"] = _iso_datetime(require(payload, "source_created_at"), "source_created_at")
-    normalized["address"] = dict(address)
-    for field in ("address_line_1", "city", "state", "country"):
-        normalized["address"][field] = str(require(address, field)).strip()
-    normalized["address"]["pincode"] = validate_pincode(require(address, "pincode"))
-    normalized["bank"] = dict(bank)
-    normalized["bank"]["bank_name"] = str(require(bank, "bank_name")).strip()
-    normalized["bank"]["ifsc_code"] = validate_ifsc(require(bank, "ifsc_code"))
-    normalized["bank"]["account_number"] = str(require(bank, "account_number")).strip()
-    if not normalized["bank"]["account_number"].isdigit():
-        raise IntegrationError("INVALID_ACCOUNT", "Account number must contain digits", 422, field="account_number")
+    # Public API 1 contract: these seven fields are mandatory today.
+    normalized = {
+        "distributor_id": str(require(payload, "distributor_id")).strip(),
+        "member_name": str(require(payload, "member_name")).strip(),
+        "mobile": validate_mobile(require(payload, "mobile")),
+        "email": validate_email(require(payload, "email")),
+        "date_of_birth": _iso_date(require(payload, "date_of_birth"), "date_of_birth"),
+        "pan_number": validate_pan(require(payload, "pan_number")),
+        "aadhaar_number": validate_aadhaar(require(payload, "aadhaar_number")),
+    }
+
+    # Backward/future compatibility: accepted internally when present, but not
+    # part of the currently published BS contract and never required.
+    for field in ("enterprise_name", "nominee_name", "nominee_relationship"):
+        value = payload.get(field)
+        if value not in (None, ""):
+            normalized[field] = str(value).strip()
+
+    if payload.get("source_created_at") not in (None, ""):
+        normalized["source_created_at"] = _iso_datetime(payload["source_created_at"], "source_created_at")
+
+    if "address" in payload and payload.get("address") is not None:
+        address = payload["address"]
+        if not isinstance(address, dict):
+            raise IntegrationError("INVALID_OBJECT", "address must be an object", 422, field="address")
+        normalized["address"] = dict(address)
+        for field in ("address_line_1", "city", "state", "country"):
+            normalized["address"][field] = str(require(address, field)).strip()
+        normalized["address"]["pincode"] = validate_pincode(require(address, "pincode"))
+
+    if "bank" in payload and payload.get("bank") is not None:
+        bank = payload["bank"]
+        if not isinstance(bank, dict):
+            raise IntegrationError("INVALID_OBJECT", "bank must be an object", 422, field="bank")
+        normalized["bank"] = dict(bank)
+        normalized["bank"]["bank_name"] = str(require(bank, "bank_name")).strip()
+        normalized["bank"]["ifsc_code"] = validate_ifsc(require(bank, "ifsc_code"))
+        normalized["bank"]["account_number"] = str(require(bank, "account_number")).strip()
+        if not normalized["bank"]["account_number"].isdigit():
+            raise IntegrationError("INVALID_ACCOUNT", "Account number must contain digits", 422, field="account_number")
+
     return normalized
 
 
@@ -111,9 +131,10 @@ def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple
     from frappe.utils.file_manager import save_file
 
     normalized = validate_distributor_payload(payload)
-    normalized["source_created_at"] = to_database_datetime(
-        normalized["source_created_at"], get_system_timezone(), "source_created_at"
-    )
+    if normalized.get("source_created_at"):
+        normalized["source_created_at"] = to_database_datetime(
+            normalized["source_created_at"], get_system_timezone(), "source_created_at"
+        )
     settings = frappe.get_cached_doc("BS Integration Settings")
     document_digests = validate_documents(files, int(settings.maximum_document_size_mb or 5))
     fingerprint = request_fingerprint({"payload": normalized, "documents": document_digests})
@@ -158,17 +179,36 @@ def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple
 
 
 def _apply_payload(doc, payload, correlation_id, fingerprint):
-    scalar_fields = ("distributor_id", "member_name", "enterprise_name", "mobile", "email", "date_of_birth", "nominee_name", "nominee_relationship", "pan_number", "source_created_at")
-    for field in scalar_fields:
-        doc.set(field, payload.get(field))
+    required_scalar_fields = (
+        "distributor_id",
+        "member_name",
+        "mobile",
+        "email",
+        "date_of_birth",
+        "pan_number",
+    )
+    for field in required_scalar_fields:
+        doc.set(field, payload[field])
+
+    # Optional legacy/future fields are only changed when they are actually
+    # supplied. A reduced payload must not wipe data captured previously.
+    for field in ("enterprise_name", "nominee_name", "nominee_relationship", "source_created_at"):
+        if field in payload:
+            doc.set(field, payload[field])
+
     doc.aadhaar_number = payload["aadhaar_number"]
     doc.aadhaar_hash = hashlib.sha256(payload["aadhaar_number"].encode()).hexdigest()
-    doc.address_json = json.dumps(payload["address"], ensure_ascii=False)
-    doc.bank_name = payload["bank"].get("bank_name")
-    doc.branch_name = payload["bank"].get("branch_name")
-    doc.ifsc_code = payload["bank"].get("ifsc_code")
-    doc.account_number = payload["bank"].get("account_number")
-    doc.account_hash = hashlib.sha256(payload["bank"]["account_number"].encode()).hexdigest()
+
+    if "address" in payload:
+        doc.address_json = json.dumps(payload["address"], ensure_ascii=False)
+
+    if "bank" in payload:
+        doc.bank_name = payload["bank"].get("bank_name")
+        doc.branch_name = payload["bank"].get("branch_name")
+        doc.ifsc_code = payload["bank"].get("ifsc_code")
+        doc.account_number = payload["bank"].get("account_number")
+        doc.account_hash = hashlib.sha256(payload["bank"]["account_number"].encode()).hexdigest()
+
     doc.correlation_id = correlation_id
     doc.request_fingerprint = fingerprint
     if not doc.kyc_status:
@@ -192,9 +232,15 @@ def _validate_identity_uniqueness(frappe, payload, current_name=None):
         "pan_number": payload["pan_number"],
         "mobile": payload["mobile"],
         "aadhaar_hash": hashlib.sha256(payload["aadhaar_number"].encode()).hexdigest(),
-        "account_hash": hashlib.sha256(payload["bank"]["account_number"].encode()).hexdigest(),
     }
+    if payload.get("bank", {}).get("account_number"):
+        checks["account_hash"] = hashlib.sha256(payload["bank"]["account_number"].encode()).hexdigest()
+
     for field, value in checks.items():
         match = frappe.db.get_value("BS Distributor Onboarding", {field: value}, "name")
         if match and match != current_name:
-            raise ConflictError("DUPLICATE_IDENTITY", f"{field.replace('_hash', '').replace('_', ' ').title()} is already linked to another distributor", field=field.replace("_hash", ""))
+            raise ConflictError(
+                "DUPLICATE_IDENTITY",
+                f"{field.replace('_hash', '').replace('_', ' ').title()} is already used by another distributor",
+                field=field.replace("_hash", ""),
+            )

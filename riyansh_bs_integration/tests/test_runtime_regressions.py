@@ -12,6 +12,7 @@ from riyansh_bs_integration.core.validation import to_database_datetime
 from riyansh_bs_integration.services.credit_note_service import create_credit_note
 from riyansh_bs_integration.services.credit_note_service import validate_credit_note_payload
 from riyansh_bs_integration.services.distributor_service import REQUIRED_FILES, submit_distributor
+from riyansh_bs_integration.services.kyc_service import approve_kyc
 from riyansh_bs_integration.services.order_service import (
     _append_shipping_charge,
     _resolve_warehouse,
@@ -90,22 +91,10 @@ class TestRuntimeRegressions(unittest.TestCase):
             "distributor_id": "TEST-RM-001",
             "member_name": "Test Member",
             "mobile": "9876543210",
+            "email": "test.member@example.com",
             "date_of_birth": "2000-01-01",
             "pan_number": "ABCDE1234F",
             "aadhaar_number": "123412341234",
-            "address": {
-                "address_line_1": "Test Road",
-                "city": "Pune",
-                "state": "Maharashtra",
-                "pincode": "411001",
-                "country": "India",
-            },
-            "bank": {
-                "bank_name": "Test Bank",
-                "ifsc_code": "ABCD0001234",
-                "account_number": "00123456789",
-            },
-            "source_created_at": "2026-09-24T11:00:00+05:30",
         }
         files = {name: _Upload(name) for name in REQUIRED_FILES}
 
@@ -165,12 +154,88 @@ class TestRuntimeRegressions(unittest.TestCase):
         self.assertIn("for update", source.lower())
         self.assertIn('"docstatus": ["in", [0, 1]]', source)
 
-    def test_kyc_decisions_lock_onboarding_before_party_creation(self):
+
+    def test_kyc_pass_creates_supplier_only_and_queues_callback(self):
+        created_supplier = SimpleNamespace(name="SUPP-TEST")
+        created_supplier.inserted = False
+        created_supplier.insert = lambda ignore_permissions=False: setattr(created_supplier, "inserted", True)
+
+        onboarding = SimpleNamespace(
+            name="BS-ONB-2026-00001",
+            owner="submitter@example.com",
+            distributor_id="RM1",
+            member_name="Distributor One",
+            kyc_status="Pending",
+            supplier=None,
+            customer=None,
+            failure_reason_code=None,
+            failure_reason=None,
+            verified_by=None,
+            verified_at=None,
+            outbound_status="Not Queued",
+            flags=SimpleNamespace(kyc_service_update=False),
+        )
+        onboarding.save = lambda ignore_permissions=False: None
+
+        class _DB:
+            @staticmethod
+            def sql(*args, **kwargs):
+                return []
+
+            @staticmethod
+            def get_value(doctype, filters, fieldname):
+                if doctype == "Supplier":
+                    return None
+                return None
+
+        fake_frappe = types.ModuleType("frappe")
+        fake_frappe.db = _DB()
+        fake_frappe.session = SimpleNamespace(user="approver@example.com")
+        fake_frappe.get_roles = lambda user: ["Riyansh KYC Approver"]
+        fake_frappe.get_cached_doc = lambda *args: SimpleNamespace(default_supplier_group="All Supplier Groups")
+        def get_doc(arg1, arg2=None):
+            if arg1 == "BS Distributor Onboarding":
+                return onboarding
+            if isinstance(arg1, dict) and arg1.get("doctype") == "Supplier":
+                self.assertNotIn("customer_name", arg1)
+                self.assertEqual(arg1["custom_distributor_id"], "RM1")
+                return created_supplier
+            raise AssertionError(f"Unexpected get_doc call: {arg1!r}, {arg2!r}")
+        fake_frappe.get_doc = get_doc
+        enqueued = []
+        fake_frappe.enqueue = lambda fn, **kwargs: enqueued.append((fn, kwargs))
+
+        fake_utils = types.ModuleType("frappe.utils")
+        fake_utils.now_datetime = lambda: datetime(2026, 10, 5, 12, 0, 0)
+
+        saved = {name: sys.modules.get(name) for name in ("frappe", "frappe.utils")}
+        try:
+            sys.modules["frappe"] = fake_frappe
+            sys.modules["frappe.utils"] = fake_utils
+            result = approve_kyc(onboarding.name)
+        finally:
+            for name, module in saved.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+        self.assertTrue(created_supplier.inserted)
+        self.assertEqual(result, {"supplier": "SUPP-TEST"})
+        self.assertEqual(onboarding.kyc_status, "Passed")
+        self.assertEqual(onboarding.supplier, "SUPP-TEST")
+        self.assertIsNone(onboarding.customer)
+        self.assertEqual(onboarding.outbound_status, "Queued")
+        self.assertEqual(len(enqueued), 1)
+
+    def test_kyc_decisions_lock_onboarding_before_supplier_creation(self):
         from pathlib import Path
 
         source = (Path(__file__).resolve().parents[1] / "services/kyc_service.py").read_text()
         self.assertGreaterEqual(source.lower().count("for update"), 2)
-        self.assertLess(source.index("for update"), source.index("_create_customer"))
+        self.assertLess(source.index("for update"), source.index("_create_supplier"))
+        self.assertNotIn("_create_customer", source)
+        self.assertNotIn("_create_party_link", source)
 
     def test_api_log_allows_its_initial_insert_hook(self):
         fake_frappe = types.ModuleType("frappe")
