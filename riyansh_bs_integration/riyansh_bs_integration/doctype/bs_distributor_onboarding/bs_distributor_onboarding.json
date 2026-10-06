@@ -145,26 +145,22 @@
   {
    "fieldname": "pan_card",
    "label": "PAN Card",
-   "fieldtype": "Attach",
-   "reqd": 1
+   "fieldtype": "Attach"
   },
   {
    "fieldname": "aadhaar_front",
    "label": "Aadhaar Front",
-   "fieldtype": "Attach",
-   "reqd": 1
+   "fieldtype": "Attach"
   },
   {
    "fieldname": "aadhaar_back",
    "label": "Aadhaar Back",
-   "fieldtype": "Attach",
-   "reqd": 1
+   "fieldtype": "Attach"
   },
   {
    "fieldname": "cancelled_cheque",
    "label": "Cancelled Cheque",
-   "fieldtype": "Attach",
-   "reqd": 1
+   "fieldtype": "Attach"
   },
   {
    "fieldname": "kyc_status",

@@ -214,6 +214,34 @@ class TestPayloadContracts(unittest.TestCase):
         self.assertEqual(remaining_return_quantity(10, [2, 3]), 5)
         self.assertEqual(remaining_return_quantity(5, [2, 4]), 0)
 
+    def test_documents_may_be_completely_omitted(self):
+        self.assertEqual(validate_documents({}), {})
+
+    def test_only_supplied_document_is_validated(self):
+        content = b"\x89PNG\r\n\x1a\nvalid-test-content"
+        upload = SimpleNamespace(
+            filename="pan_card.png",
+            content_type="image/png",
+            stream=BytesIO(content),
+        )
+        result = validate_documents({"pan_card": upload})
+        self.assertEqual(set(result), {"pan_card"})
+
+    def test_unknown_distributor_payload_field_is_rejected(self):
+        payload = {
+            "distributor_id": "RM6543501",
+            "member_name": "Distributor Name",
+            "mobile": "9876543210",
+            "email": "member@example.com",
+            "date_of_birth": "2000-01-01",
+            "pan_number": "ABCDE1234F",
+            "aadhaar_number": "123412341234",
+            "unexpected_field": "should fail",
+        }
+        with self.assertRaises(IntegrationError) as ctx:
+            validate_distributor_payload(payload)
+        self.assertEqual(ctx.exception.code, "UNKNOWN_FIELD")
+
     def test_document_mime_must_match_file_signature(self):
         files = {
             name: SimpleNamespace(filename=f"{name}.png", content_type="image/png", stream=BytesIO(b"not-a-png"))
