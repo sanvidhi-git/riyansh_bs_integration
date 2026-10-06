@@ -10,11 +10,21 @@ from riyansh_bs_integration.services.distributor_service import submit_distribut
 
 @frappe.whitelist(methods=["POST"])
 @integration_endpoint("BS-01", reference_key="distributor_id")
-def submit(payload=None, correlation_id=None):
+def submit(payload=None, correlation_id=None, **kwargs):
     try:
-        parsed = frappe.parse_json(payload or frappe.form_dict.get("payload") or "{}")
+        raw_payload = payload or frappe.form_dict.get("payload")
+
+        # API1 supports both:
+        # 1. legacy multipart/form-data with a JSON field named "payload"
+        # 2. direct application/json containing the distributor fields
+        if raw_payload in (None, ""):
+            request_json = frappe.request.get_json(silent=True)
+            raw_payload = request_json if isinstance(request_json, dict) else {}
+
+        parsed = frappe.parse_json(raw_payload)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise IntegrationError("INVALID_JSON", "payload is not valid JSON", 400, field="payload") from exc
+
     files = dict(frappe.request.files or {})
     data, created = submit_distributor(parsed, files, correlation_id)
     frappe.local.response.http_status_code = 201 if created else 200

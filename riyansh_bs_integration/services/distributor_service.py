@@ -18,7 +18,29 @@ from riyansh_bs_integration.core.validation import (
 )
 
 ALLOWED_DOCUMENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
-REQUIRED_FILES = ("pan_card", "aadhaar_front", "aadhaar_back", "cancelled_cheque")
+
+# Supported KYC document fields. All are optional.
+DOCUMENT_FIELDS = ("pan_card", "aadhaar_front", "aadhaar_back", "cancelled_cheque")
+
+# Kept as an internal compatibility alias for existing tests/helpers.
+# The files themselves are no longer required.
+REQUIRED_FILES = DOCUMENT_FIELDS
+
+ALLOWED_PAYLOAD_FIELDS = {
+    "distributor_id",
+    "member_name",
+    "mobile",
+    "email",
+    "date_of_birth",
+    "pan_number",
+    "aadhaar_number",
+    "enterprise_name",
+    "nominee_name",
+    "nominee_relationship",
+    "source_created_at",
+    "address",
+    "bank",
+}
 
 
 def _iso_date(value, field):
@@ -41,6 +63,15 @@ def _iso_datetime(value, field):
 def validate_distributor_payload(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise IntegrationError("INVALID_JSON", "payload must be a JSON object", 400, field="payload")
+
+    unknown_fields = sorted(set(payload) - ALLOWED_PAYLOAD_FIELDS)
+    if unknown_fields:
+        raise IntegrationError(
+            "UNKNOWN_FIELD",
+            f"Unsupported field: {unknown_fields[0]}",
+            422,
+            field=unknown_fields[0],
+        )
 
     # Public API 1 contract: these seven fields are mandatory today.
     normalized = {
@@ -99,10 +130,10 @@ def _detected_content_type(content: bytes) -> str | None:
 def validate_documents(files: dict, max_size_mb: int = 5) -> dict[str, str]:
     maximum = max_size_mb * 1024 * 1024
     digests = {}
-    for key in REQUIRED_FILES:
+    for key in DOCUMENT_FIELDS:
         upload = files.get(key)
         if not upload:
-            raise IntegrationError("MISSING_DOCUMENT", f"{key} is required", 422, field=key)
+            continue
         content_type = (getattr(upload, "content_type", "") or "").lower()
         filename = (getattr(upload, "filename", "") or "").lower()
         content = upload.stream.read(maximum + 1)
@@ -216,8 +247,10 @@ def _apply_payload(doc, payload, correlation_id, fingerprint):
 
 
 def _save_documents(doc, files, save_file):
-    for fieldname in REQUIRED_FILES:
-        upload = files[fieldname]
+    for fieldname in DOCUMENT_FIELDS:
+        upload = files.get(fieldname)
+        if not upload:
+            continue
         saved = save_file(upload.filename, upload.stream.read(), doc.doctype, doc.name, is_private=1)
         doc.set(fieldname, saved.file_url)
         upload.stream.seek(0)

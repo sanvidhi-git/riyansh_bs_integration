@@ -42,7 +42,10 @@ class TestSchemaFiles(unittest.TestCase):
         )
         fields = {field["fieldname"]: field for field in schema["fields"]}
         for field in ("distributor_id", "member_name", "mobile", "email", "date_of_birth", "pan_number", "aadhaar_number", "pan_card", "aadhaar_front", "aadhaar_back", "cancelled_cheque"):
-            self.assertEqual(fields[field].get("reqd"), 1, field)
+            if field in ("pan_card", "aadhaar_front", "aadhaar_back", "cancelled_cheque"):
+                self.assertNotEqual(fields[field].get("reqd"), 1, field)
+            else:
+                self.assertEqual(fields[field].get("reqd"), 1, field)
         for field in ("address_json", "bank_name", "ifsc_code", "account_number", "source_created_at"):
             self.assertNotEqual(fields[field].get("reqd"), 1, field)
 
