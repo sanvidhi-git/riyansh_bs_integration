@@ -170,7 +170,6 @@ def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple
     document_digests = validate_documents(files, int(settings.maximum_document_size_mb or 5))
     fingerprint = request_fingerprint({"payload": normalized, "documents": document_digests})
     existing_name = frappe.db.get_value("BS Distributor Onboarding", {"distributor_id": normalized["distributor_id"]}, "name")
-    _validate_identity_uniqueness(frappe, normalized, existing_name)
     if existing_name:
         existing = frappe.get_doc("BS Distributor Onboarding", existing_name)
         if existing.request_fingerprint == fingerprint:
@@ -258,22 +257,3 @@ def _save_documents(doc, files, save_file):
 
 def _onboarding_result(doc):
     return {"distributor_id": doc.distributor_id, "erp_onboarding_id": doc.name, "kyc_status": doc.kyc_status.upper().replace(" ", "_")}
-
-
-def _validate_identity_uniqueness(frappe, payload, current_name=None):
-    checks = {
-        "pan_number": payload["pan_number"],
-        "mobile": payload["mobile"],
-        "aadhaar_hash": hashlib.sha256(payload["aadhaar_number"].encode()).hexdigest(),
-    }
-    if payload.get("bank", {}).get("account_number"):
-        checks["account_hash"] = hashlib.sha256(payload["bank"]["account_number"].encode()).hexdigest()
-
-    for field, value in checks.items():
-        match = frappe.db.get_value("BS Distributor Onboarding", {field: value}, "name")
-        if match and match != current_name:
-            raise ConflictError(
-                "DUPLICATE_IDENTITY",
-                f"{field.replace('_hash', '').replace('_', ' ').title()} is already used by another distributor",
-                field=field.replace("_hash", ""),
-            )

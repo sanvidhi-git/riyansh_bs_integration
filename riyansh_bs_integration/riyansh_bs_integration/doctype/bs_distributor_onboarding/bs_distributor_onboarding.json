@@ -64,7 +64,7 @@
    "label": "Mobile",
    "fieldtype": "Data",
    "reqd": 1,
-   "unique": 1
+   "unique": 0
   },
   {
    "fieldname": "email",
@@ -98,7 +98,7 @@
    "label": "PAN Number",
    "fieldtype": "Data",
    "reqd": 1,
-   "unique": 1
+   "unique": 0
   },
   {
    "fieldname": "aadhaar_number",
@@ -112,7 +112,7 @@
    "fieldtype": "Data",
    "hidden": 1,
    "read_only": 1,
-   "unique": 1
+   "unique": 0
   },
   {
    "fieldname": "bank_name",
@@ -140,7 +140,7 @@
    "fieldtype": "Data",
    "hidden": 1,
    "read_only": 1,
-   "unique": 1
+   "unique": 0
   },
   {
    "fieldname": "pan_card",
