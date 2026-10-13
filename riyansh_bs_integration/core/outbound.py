@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import hmac
+import time
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
@@ -92,16 +94,52 @@ def dispatch_event(event_name: str, http_post=None):
     maximum_attempts = int(settings.maximum_outbound_attempts or 5)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     headers["Idempotency-Key"] = event.event_key
+
+    raw_body = (
+        json.dumps(event.payload, separators=(",", ":"), default=str)
+        if isinstance(event.payload, dict)
+        else str(event.payload)
+    )
+
     authentication_type = settings.authentication_type
     if authentication_type == "Bearer Token":
-        headers["Authorization"] = f"Bearer {settings.get_password('bearer_token')}"
+        bearer_token = settings.get_password("bearer_token")
+        hmac_key = settings.get_password("api_secret")
+
+        if not bearer_token:
+            raise IntegrationError(
+                "MISSING_BEARER_TOKEN",
+                "Bearer token is required for KYC callback",
+                500,
+            )
+
+        if not hmac_key:
+            raise IntegrationError(
+                "MISSING_HMAC_KEY",
+                "HMAC key is required for KYC callback",
+                500,
+            )
+
+        timestamp = str(int(time.time()))
+        signature_payload = f"{timestamp}.{raw_body}".encode("utf-8")
+        signature = hmac.new(
+            hmac_key.encode("utf-8"),
+            signature_payload,
+            hashlib.sha256,
+        ).hexdigest()
+
+        headers["Authorization"] = f"Bearer {bearer_token}"
+        headers["X-Riyansh-Timestamp"] = timestamp
+        headers["X-Riyansh-Signature"] = f"sha256={signature}"
+
     elif authentication_type == "API Key and Secret":
         headers["Authorization"] = f"token {settings.get_password('api_key')}:{settings.get_password('api_secret')}"
+
     post = http_post or requests.post
     try:
         response = post(
             event.target_url,
-            json=event.payload if isinstance(event.payload, dict) else json.loads(event.payload),
+            data=raw_body.encode("utf-8"),
             headers=headers,
             timeout=int(settings.request_timeout_seconds or 30),
         )
