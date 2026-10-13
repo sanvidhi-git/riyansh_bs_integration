@@ -78,7 +78,7 @@ def validate_distributor_payload(payload: dict) -> dict:
         "distributor_id": str(require(payload, "distributor_id")).strip(),
         "member_name": str(require(payload, "member_name")).strip(),
         "mobile": validate_mobile(require(payload, "mobile")),
-        "email": validate_email(require(payload, "email")),
+        "email": validate_email(payload["email"]) if payload.get("email") not in (None, "") else "",
         "date_of_birth": _iso_date(require(payload, "date_of_birth"), "date_of_birth"),
         "pan_number": validate_pan(require(payload, "pan_number")),
         "aadhaar_number": validate_aadhaar(require(payload, "aadhaar_number")),
@@ -118,41 +118,107 @@ def validate_distributor_payload(payload: dict) -> dict:
 
 
 def _detected_content_type(content: bytes) -> str | None:
+    """Detect supported document/image formats from actual file bytes.
+
+    The sender-provided multipart Content-Type is intentionally not trusted,
+    because browsers/PHP clients may send valid images as
+    application/octet-stream or other generic MIME values.
+    """
     if content.startswith(b"%PDF-"):
         return "application/pdf"
+
     if content.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
+
     if content.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
+
+    if content.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+
+    if content.startswith(b"BM"):
+        return "image/bmp"
+
+    if content.startswith((b"II*\x00", b"MM\x00*")):
+        return "image/tiff"
+
+    if (
+        len(content) >= 12
+        and content[:4] == b"RIFF"
+        and content[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+
+    # HEIC / HEIF / AVIF family uses ISO-BMFF with an ftyp box.
+    if len(content) >= 12 and content[4:8] == b"ftyp":
+        brand = content[8:12]
+        if brand in {
+            b"heic", b"heix", b"hevc", b"hevx",
+            b"heim", b"heis", b"mif1", b"msf1",
+        }:
+            return "image/heic"
+        if brand == b"avif":
+            return "image/avif"
+
     return None
 
 
 def validate_documents(files: dict, max_size_mb: int = 5) -> dict[str, str]:
     maximum = max_size_mb * 1024 * 1024
     digests = {}
+
+    allowed_detected_types = {
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/bmp",
+        "image/tiff",
+        "image/heic",
+        "image/avif",
+    }
+
     for key in DOCUMENT_FIELDS:
         upload = files.get(key)
+
+        # Documents are optional. Completely absent fields are skipped.
         if not upload:
             continue
-        content_type = (getattr(upload, "content_type", "") or "").lower()
-        filename = (getattr(upload, "filename", "") or "").lower()
+
         content = upload.stream.read(maximum + 1)
         upload.stream.seek(0)
+
         if not content:
-            raise IntegrationError("EMPTY_DOCUMENT", f"{key} is empty", 422, field=key)
+            raise IntegrationError(
+                "EMPTY_DOCUMENT",
+                f"{key} is empty",
+                422,
+                field=key,
+            )
+
         if len(content) > maximum:
-            raise IntegrationError("DOCUMENT_TOO_LARGE", f"{key} exceeds {max_size_mb} MB", 413, field=key)
-        if content_type not in ALLOWED_DOCUMENT_TYPES or not filename.endswith((".pdf", ".jpg", ".jpeg", ".png")):
-            raise IntegrationError("UNSUPPORTED_DOCUMENT", f"{key} must be PDF, JPG or PNG", 415, field=key)
+            raise IntegrationError(
+                "DOCUMENT_TOO_LARGE",
+                f"{key} exceeds {max_size_mb} MB",
+                413,
+                field=key,
+            )
+
         detected = _detected_content_type(content)
-        expected_extensions = {
-            "application/pdf": (".pdf",),
-            "image/png": (".png",),
-            "image/jpeg": (".jpg", ".jpeg"),
-        }
-        if detected != content_type or not filename.endswith(expected_extensions.get(detected, ())):
-            raise IntegrationError("DOCUMENT_TYPE_MISMATCH", f"{key} content does not match its name/type", 415, field=key)
+
+        if detected not in allowed_detected_types:
+            raise IntegrationError(
+                "UNSUPPORTED_DOCUMENT",
+                f"{key} must contain a supported image or PDF file",
+                415,
+                field=key,
+            )
+
+        # Deliberately do NOT reject a valid file just because the sending
+        # system supplied application/octet-stream, image/jpg, etc.
         digests[key] = hashlib.sha256(content).hexdigest()
+
     return digests
 
 
@@ -213,12 +279,15 @@ def _apply_payload(doc, payload, correlation_id, fingerprint):
         "distributor_id",
         "member_name",
         "mobile",
-        "email",
         "date_of_birth",
         "pan_number",
     )
     for field in required_scalar_fields:
         doc.set(field, payload[field])
+
+    # Email remains part of the API/DocType but is optional.
+    # Blank or omitted email is accepted.
+    doc.email = payload.get("email") or ""
 
     # Optional legacy/future fields are only changed when they are actually
     # supplied. A reduced payload must not wipe data captured previously.

@@ -123,6 +123,8 @@ class TestPayloadContracts(unittest.TestCase):
         }
         for field in base:
             with self.subTest(field=field):
+                if field == "email":
+                    continue
                 payload = dict(base)
                 payload.pop(field)
                 with self.assertRaises(IntegrationError) as raised:
@@ -249,6 +251,36 @@ class TestPayloadContracts(unittest.TestCase):
         }
         with self.assertRaises(IntegrationError):
             validate_documents(files)
+
+
+
+class TestFlexibleApi1Contract(unittest.TestCase):
+    def test_email_can_be_blank(self):
+        payload = {
+            "distributor_id": "RM-EMAIL-OPTIONAL",
+            "member_name": "Optional Email Test",
+            "mobile": "9876543210",
+            "email": "",
+            "date_of_birth": "2000-01-01",
+            "pan_number": "ABCDE1234F",
+            "aadhaar_number": "123412341234",
+        }
+
+        normalized = validate_distributor_payload(payload)
+        self.assertEqual(normalized["email"], "")
+
+    def test_email_can_be_omitted(self):
+        payload = {
+            "distributor_id": "RM-EMAIL-OMITTED",
+            "member_name": "Optional Email Test",
+            "mobile": "9876543210",
+            "date_of_birth": "2000-01-01",
+            "pan_number": "ABCDE1234F",
+            "aadhaar_number": "123412341234",
+        }
+
+        normalized = validate_distributor_payload(payload)
+        self.assertEqual(normalized["email"], "")
 
 
 if __name__ == "__main__":
