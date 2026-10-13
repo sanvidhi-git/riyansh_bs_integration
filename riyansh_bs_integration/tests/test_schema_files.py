@@ -41,15 +41,34 @@ class TestSchemaFiles(unittest.TestCase):
             (ROOT / "riyansh_bs_integration/doctype/bs_distributor_onboarding/bs_distributor_onboarding.json").read_text()
         )
         fields = {field["fieldname"]: field for field in schema["fields"]}
-        for field in ("distributor_id", "member_name", "mobile", "email", "date_of_birth", "pan_number", "aadhaar_number", "pan_card", "aadhaar_front", "aadhaar_back", "cancelled_cheque"):
-            if field in ("pan_card", "aadhaar_front", "aadhaar_back", "cancelled_cheque"):
-                self.assertNotEqual(fields[field].get("reqd"), 1, field)
-            else:
-                self.assertEqual(fields[field].get("reqd"), 1, field)
-        for field in ("address_json", "bank_name", "ifsc_code", "account_number", "source_created_at"):
+
+        required_fields = (
+            "distributor_id",
+            "member_name",
+            "mobile",
+            "date_of_birth",
+            "pan_number",
+            "aadhaar_number",
+        )
+
+        optional_fields = (
+            "email",
+            "pan_card",
+            "aadhaar_front",
+            "aadhaar_back",
+            "cancelled_cheque",
+            "address_json",
+            "bank_name",
+            "ifsc_code",
+            "account_number",
+            "source_created_at",
+        )
+
+        for field in required_fields:
+            self.assertEqual(fields[field].get("reqd"), 1, field)
+
+        for field in optional_fields:
             self.assertNotEqual(fields[field].get("reqd"), 1, field)
-
-
 
 if __name__ == "__main__":
     unittest.main()

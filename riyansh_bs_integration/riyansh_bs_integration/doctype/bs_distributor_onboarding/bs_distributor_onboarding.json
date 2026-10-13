@@ -70,7 +70,7 @@
    "fieldname": "email",
    "label": "Email",
    "fieldtype": "Data",
-   "reqd": 1
+   "reqd": 0
   },
   {
    "fieldname": "date_of_birth",
