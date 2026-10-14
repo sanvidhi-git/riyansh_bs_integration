@@ -238,9 +238,30 @@ def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple
     existing_name = frappe.db.get_value("BS Distributor Onboarding", {"distributor_id": normalized["distributor_id"]}, "name")
     if existing_name:
         existing = frappe.get_doc("BS Distributor Onboarding", existing_name)
+
+        # A new submission for a previously failed distributor is Re-KYC.
+        # Re-open the SAME onboarding record even when the payload/files are
+        # identical to the previous submission.
+        if existing.kyc_status == "Failed":
+            existing.kyc_status = "Pending"
+            existing.failure_reason_code = None
+            existing.failure_reason = None
+            existing.verified_by = None
+            existing.verified_at = None
+            existing.outbound_status = "Not Queued"
+            existing.flags.kyc_service_update = True
+
+            _apply_payload(existing, normalized, correlation_id, fingerprint)
+            _save_documents(existing, files, save_file)
+            existing.save(ignore_permissions=True)
+            return _onboarding_result(existing), False
+
+        # Normal idempotent retry for records that are not failed.
         if existing.request_fingerprint == fingerprint:
             return _onboarding_result(existing), False
-        if existing.kyc_status in {"Passed", "Failed"}:
+
+        # Changes to an already approved distributor require fresh review.
+        if existing.kyc_status == "Passed":
             existing.kyc_status = "Under Review"
             existing.failure_reason_code = None
             existing.failure_reason = None
@@ -248,6 +269,7 @@ def submit_distributor(payload: dict, files: dict, correlation_id: str) -> tuple
             existing.verified_at = None
             existing.outbound_status = "Not Queued"
             existing.flags.kyc_service_update = True
+
         _apply_payload(existing, normalized, correlation_id, fingerprint)
         _save_documents(existing, files, save_file)
         existing.save(ignore_permissions=True)
