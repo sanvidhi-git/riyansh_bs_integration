@@ -44,10 +44,20 @@ ALLOWED_PAYLOAD_FIELDS = {
 
 
 def _iso_date(value, field):
-    try:
-        return date.fromisoformat(str(value)).isoformat()
-    except (TypeError, ValueError) as exc:
-        raise IntegrationError("INVALID_DATE", f"{field} must use YYYY-MM-DD", 422, field=field) from exc
+    raw = str(value).strip()
+
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+
+    raise IntegrationError(
+        "INVALID_DATE",
+        f"{field} must use YYYY-MM-DD or DD-MM-YYYY",
+        422,
+        field=field,
+    )
 
 
 def _iso_datetime(value, field):
