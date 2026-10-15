@@ -46,13 +46,13 @@ class TestSchemaFiles(unittest.TestCase):
             "distributor_id",
             "member_name",
             "mobile",
-            "date_of_birth",
             "pan_number",
             "aadhaar_number",
         )
 
         optional_fields = (
             "email",
+            "date_of_birth",
             "pan_card",
             "aadhaar_front",
             "aadhaar_back",
