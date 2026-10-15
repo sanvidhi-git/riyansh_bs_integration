@@ -283,5 +283,22 @@ class TestFlexibleApi1Contract(unittest.TestCase):
         self.assertEqual(normalized["email"], "")
 
 
+    def test_legacy_email_placeholders_are_treated_as_blank(self):
+        for email in ("-", "NA", "N/A", "NULL", "null", "None", " none ", " na ", " n/a "):
+            with self.subTest(email=email):
+                payload = {
+                    "distributor_id": "RM-LEGACY-EMAIL",
+                    "member_name": "Legacy Email Test",
+                    "mobile": "9876543210",
+                    "email": email,
+                    "date_of_birth": "2000-01-01",
+                    "pan_number": "ABCDE1234F",
+                    "aadhaar_number": "123412341234",
+                }
+
+                normalized = validate_distributor_payload(payload)
+                self.assertEqual(normalized["email"], "")
+
+
 if __name__ == "__main__":
     unittest.main()
