@@ -96,13 +96,56 @@ class TestPayloadContracts(unittest.TestCase):
                 normalized = validate_distributor_payload(payload)
                 self.assertEqual(normalized["date_of_birth"], expected)
 
+    def test_date_of_birth_legacy_blank_values_are_optional(self):
+        for dob in (
+            None,
+            "",
+            " ",
+            "   ",
+            "-",
+            " - ",
+            "NA",
+            "N/A",
+            "NULL",
+            "null",
+            "NONE",
+            "None",
+            "0000-00-00",
+            " 0000-00-00 ",
+        ):
+            with self.subTest(dob=dob):
+                payload = {
+                    "distributor_id": "RM-DOB-OPTIONAL",
+                    "member_name": "Optional DOB Test",
+                    "mobile": "9876543210",
+                    "email": "",
+                    "date_of_birth": dob,
+                    "pan_number": "ABCDE1234F",
+                    "aadhaar_number": "123412341234",
+                }
+
+                normalized = validate_distributor_payload(payload)
+                self.assertEqual(normalized["date_of_birth"], "")
+
+    def test_date_of_birth_can_be_omitted(self):
+        payload = {
+            "distributor_id": "RM-DOB-OMITTED",
+            "member_name": "DOB Omitted Test",
+            "mobile": "9876543210",
+            "email": "",
+            "pan_number": "ABCDE1234F",
+            "aadhaar_number": "123412341234",
+        }
+
+        normalized = validate_distributor_payload(payload)
+        self.assertEqual(normalized["date_of_birth"], "")
+
     def test_date_of_birth_rejects_invalid_formats(self):
         for dob in (
-            "0000-00-00",
             "31-02-1998",
             "24/07/1998",
             "07/24/1998",
-            "",
+            "abc",
         ):
             with self.subTest(dob=dob):
                 payload = {
@@ -167,7 +210,7 @@ class TestPayloadContracts(unittest.TestCase):
         }
         for field in base:
             with self.subTest(field=field):
-                if field == "email":
+                if field in ("email", "date_of_birth"):
                     continue
                 payload = dict(base)
                 payload.pop(field)

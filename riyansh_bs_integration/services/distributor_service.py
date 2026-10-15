@@ -60,6 +60,16 @@ def _iso_date(value, field):
     )
 
 
+def _optional_date_of_birth(value):
+    raw = str(value).strip() if value is not None else ""
+    legacy_blank_values = {"", "-", "NA", "N/A", "NULL", "NONE", "0000-00-00"}
+
+    if raw.upper() in legacy_blank_values:
+        return ""
+
+    return _iso_date(raw, "date_of_birth")
+
+
 def _iso_datetime(value, field):
     try:
         parsed = datetime.fromisoformat(str(value))
@@ -102,7 +112,7 @@ def validate_distributor_payload(payload: dict) -> dict:
         "member_name": str(require(payload, "member_name")).strip(),
         "mobile": validate_mobile(require(payload, "mobile")),
         "email": normalized_email,
-        "date_of_birth": _iso_date(require(payload, "date_of_birth"), "date_of_birth"),
+        "date_of_birth": _optional_date_of_birth(payload.get("date_of_birth")),
         "pan_number": validate_pan(require(payload, "pan_number")),
         "aadhaar_number": validate_aadhaar(require(payload, "aadhaar_number")),
     }
@@ -324,7 +334,6 @@ def _apply_payload(doc, payload, correlation_id, fingerprint):
         "distributor_id",
         "member_name",
         "mobile",
-        "date_of_birth",
         "pan_number",
     )
     for field in required_scalar_fields:
@@ -333,6 +342,10 @@ def _apply_payload(doc, payload, correlation_id, fingerprint):
     # Email remains part of the API/DocType but is optional.
     # Blank or omitted email is accepted.
     doc.email = payload.get("email") or ""
+
+    # Date of birth is optional for legacy BS records.
+    # Valid supplied DOBs are normalized to YYYY-MM-DD.
+    doc.date_of_birth = payload.get("date_of_birth") or ""
 
     # Optional legacy/future fields are only changed when they are actually
     # supplied. A reduced payload must not wipe data captured previously.

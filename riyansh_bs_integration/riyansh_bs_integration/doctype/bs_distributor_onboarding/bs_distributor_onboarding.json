@@ -76,7 +76,7 @@
    "fieldname": "date_of_birth",
    "label": "Date of Birth",
    "fieldtype": "Date",
-   "reqd": 1
+   "reqd": 0
   },
   {
    "fieldname": "nominee_name",
