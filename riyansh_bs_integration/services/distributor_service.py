@@ -73,12 +73,25 @@ def validate_distributor_payload(payload: dict) -> dict:
             field=unknown_fields[0],
         )
 
-    # Public API 1 contract: these seven fields are mandatory today.
+    # Email is optional. Legacy BS records may use placeholder values for
+    # "no email"; treat those placeholders as blank instead of rejecting KYC.
+    raw_email = payload.get("email")
+    email_text = str(raw_email).strip() if raw_email is not None else ""
+    legacy_blank_email_values = {"", "-", "NA", "N/A", "NULL", "NONE"}
+
+    normalized_email = (
+        ""
+        if email_text.upper() in legacy_blank_email_values
+        else validate_email(email_text)
+    )
+
+    # Public API 1 contract: email is optional; the other identity fields below
+    # remain mandatory.
     normalized = {
         "distributor_id": str(require(payload, "distributor_id")).strip(),
         "member_name": str(require(payload, "member_name")).strip(),
         "mobile": validate_mobile(require(payload, "mobile")),
-        "email": validate_email(payload["email"]) if payload.get("email") not in (None, "") else "",
+        "email": normalized_email,
         "date_of_birth": _iso_date(require(payload, "date_of_birth"), "date_of_birth"),
         "pan_number": validate_pan(require(payload, "pan_number")),
         "aadhaar_number": validate_aadhaar(require(payload, "aadhaar_number")),
