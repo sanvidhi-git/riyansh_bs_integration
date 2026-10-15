@@ -74,6 +74,50 @@ class TestPayloadContracts(unittest.TestCase):
             "grand_total": 100,
         }
 
+    def test_date_of_birth_accepts_iso_and_legacy_formats(self):
+        cases = (
+            ("1998-07-24", "1998-07-24"),
+            ("24-07-1998", "1998-07-24"),
+            (" 24-07-1998 ", "1998-07-24"),
+        )
+
+        for dob, expected in cases:
+            with self.subTest(dob=dob):
+                payload = {
+                    "distributor_id": "RM-DOB-TEST",
+                    "member_name": "DOB Test",
+                    "mobile": "9876543210",
+                    "email": "",
+                    "date_of_birth": dob,
+                    "pan_number": "ABCDE1234F",
+                    "aadhaar_number": "123412341234",
+                }
+
+                normalized = validate_distributor_payload(payload)
+                self.assertEqual(normalized["date_of_birth"], expected)
+
+    def test_date_of_birth_rejects_invalid_formats(self):
+        for dob in (
+            "0000-00-00",
+            "31-02-1998",
+            "24/07/1998",
+            "07/24/1998",
+            "",
+        ):
+            with self.subTest(dob=dob):
+                payload = {
+                    "distributor_id": "RM-DOB-INVALID",
+                    "member_name": "DOB Invalid Test",
+                    "mobile": "9876543210",
+                    "email": "",
+                    "date_of_birth": dob,
+                    "pan_number": "ABCDE1234F",
+                    "aadhaar_number": "123412341234",
+                }
+
+                with self.assertRaises(IntegrationError):
+                    validate_distributor_payload(payload)
+
     def test_valid_distributor_is_normalized(self):
         payload = {
             "distributor_id": " RM6110738 ",
