@@ -29,7 +29,7 @@ def validate_credit_note_payload(payload):
         raise IntegrationError("INVALID_JSON", "Request body must be a JSON object", 400)
     if str(payload.get("status", "")).upper() != "APPROVED":
         raise IntegrationError("RETURN_NOT_APPROVED", "Only APPROVED credit notes are accepted", 422, field="status")
-    for field in ("bs_credit_note_id", "bs_order_id", "distributor_id", "original_invoice_reference", "credit_note_datetime", "reason_code", "reason", "warehouse_code", "items", "taxable_value", "total_tax", "grand_total"):
+    for field in ("bs_credit_note_id", "bs_order_id", "customer_id", "original_invoice_reference", "credit_note_datetime", "reason_code", "reason", "warehouse_code", "items", "taxable_value", "total_tax", "grand_total"):
         require(payload, field)
     try:
         credit_note_datetime = datetime.fromisoformat(str(payload["credit_note_datetime"]))
@@ -96,18 +96,53 @@ def create_credit_note(payload, correlation_id):
         raise IntegrationError("INVOICE_NOT_SUBMITTED", "Original Sales Invoice must be submitted", 422)
     if original.custom_bs_order_id and original.custom_bs_order_id != payload["bs_order_id"]:
         raise IntegrationError("ORDER_REFERENCE_MISMATCH", "BS order ID does not match the original invoice", 422, field="bs_order_id")
-    customer_distributor = frappe.db.get_value("Customer", original.customer, "custom_distributor_id")
-    if customer_distributor != payload["distributor_id"]:
-        raise IntegrationError("DISTRIBUTOR_MISMATCH", "Distributor does not match original invoice", 422)
+    customer = frappe.db.get_value(
+        "Customer",
+        {"custom_distributor_id": payload["customer_id"]},
+        "name",
+    )
+    if not customer:
+        raise IntegrationError(
+            "CUSTOMER_NOT_FOUND",
+            "Customer ID does not exist in ERPNext",
+            422,
+            field="customer_id",
+        )
+
+    if customer != original.customer:
+        raise IntegrationError(
+            "CUSTOMER_MISMATCH",
+            "Customer does not match the original invoice",
+            422,
+            field="customer_id",
+        )
+
+    settings = frappe.get_cached_doc("BS Integration Settings")
+    from riyansh_bs_integration.services.order_service import _resolve_warehouse
+    warehouse = _resolve_warehouse(frappe, settings, payload["warehouse_code"])
     requested = {}
     for row in payload["items"]:
         item_code = row["item_code"]
         requested[item_code] = requested.get(item_code, Decimal("0")) + Decimal(str(row["qty"]))
     original_qty = {}
     original_rates = {}
+    original_warehouses = {}
+
     for row in original.items:
         original_qty[row.item_code] = original_qty.get(row.item_code, Decimal("0")) + Decimal(str(row.qty))
         original_rates.setdefault(row.item_code, Decimal(str(row.rate)))
+        if row.warehouse:
+            original_warehouses.setdefault(row.item_code, set()).add(row.warehouse)
+
+    for item_code in requested:
+        warehouses = original_warehouses.get(item_code, set())
+        if warehouses and warehouse not in warehouses:
+            raise IntegrationError(
+                "WAREHOUSE_MISMATCH",
+                f"Warehouse does not match original invoice for {item_code}",
+                422,
+                field="warehouse_code",
+            )
     return_parents = set(
         frappe.get_all(
             "Sales Invoice",
@@ -164,7 +199,6 @@ def create_credit_note(payload, correlation_id):
         if winner and winner.custom_bs_request_fingerprint == fingerprint:
             return {"credit_note": winner.name, "duplicate": True}, False
         raise ConflictError("CREDIT_NOTE_ID_CONFLICT", "The BS credit-note ID already exists with different data", field="bs_credit_note_id")
-    settings = frappe.get_cached_doc("BS Integration Settings")
     tolerance = Decimal(str(settings.amount_tolerance or "0.02"))
     if abs(abs(Decimal(str(credit.grand_total))) - Decimal(str(payload["grand_total"]))) > tolerance:
         raise IntegrationError("ERP_CREDIT_TOTAL_MISMATCH", "ERPNext calculated credit total does not match BS grand total", 422)
