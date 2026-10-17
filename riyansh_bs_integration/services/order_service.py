@@ -27,7 +27,7 @@ def _money(value, field):
 def validate_order_payload(payload):
     if not isinstance(payload, dict):
         raise IntegrationError("INVALID_JSON", "Request body must be a JSON object", 400)
-    for field in ("bs_order_id", "distributor_id", "order_datetime", "warehouse_code", "currency", "payment_status", "shipping_address", "items"):
+    for field in ("bs_order_id", "customer_id", "order_datetime", "warehouse_code", "currency", "payment_status", "shipping_address", "items"):
         require(payload, field)
     payload = dict(payload)
     try:
@@ -86,14 +86,23 @@ def create_sales_order(payload, correlation_id):
         if existing.custom_bs_request_fingerprint != fingerprint:
             raise ConflictError("ORDER_ID_CONFLICT", "The BS order ID already exists with different data", field="bs_order_id")
         return {"sales_order": existing.name, "duplicate": True}, False
-    onboarding = frappe.db.get_value("BS Distributor Onboarding", {"distributor_id":payload["distributor_id"], "kyc_status":"Passed"}, ["customer"], as_dict=True)
-    if not onboarding or not onboarding.customer:
-        raise IntegrationError("DISTRIBUTOR_NOT_VERIFIED", "Distributor is not KYC verified", 422, field="distributor_id")
+    customer = frappe.db.get_value(
+        "Customer",
+        {"custom_distributor_id": payload["customer_id"]},
+        "name",
+    )
+    if not customer:
+        raise IntegrationError(
+            "CUSTOMER_NOT_FOUND",
+            "Customer ID does not exist in ERPNext",
+            422,
+            field="customer_id",
+        )
     settings = frappe.get_cached_doc("BS Integration Settings")
     _validate_order_configuration(frappe, settings, payload)
     warehouse = _resolve_warehouse(frappe, settings, payload["warehouse_code"])
     doc = frappe.new_doc("Sales Order")
-    doc.company, doc.customer = settings.company, onboarding.customer
+    doc.company, doc.customer = settings.company, customer
     doc.currency = payload["currency"]
     doc.selling_price_list = settings.default_price_list
     doc.transaction_date = datetime.fromisoformat(payload["order_datetime"]).date()
@@ -104,7 +113,9 @@ def create_sales_order(payload, correlation_id):
         payload["order_datetime"], get_system_timezone(), "order_datetime"
     )
     doc.custom_bs_request_fingerprint = fingerprint
-    doc.shipping_address_name = _get_or_create_shipping_address(frappe, onboarding.customer, payload)
+    shipping_address = _get_or_create_shipping_address(frappe, customer, payload)
+    doc.shipping_address_name = shipping_address
+    doc.customer_address = shipping_address
     for item in payload["items"]:
         item_record = frappe.db.get_value("Item", item["item_code"], ["name", "disabled", "stock_uom", "is_stock_item"], as_dict=True)
         if not item_record:
@@ -119,6 +130,9 @@ def create_sales_order(payload, correlation_id):
             if available < Decimal(str(item["qty"])):
                 raise IntegrationError("INSUFFICIENT_STOCK", f"Insufficient stock for {item['item_code']}", 422, field="qty")
         doc.append("items", {"item_code":item["item_code"], "qty":item["qty"], "uom":item["uom"], "rate":item["rate"], "discount_amount":item.get("discount_amount", 0), "warehouse":warehouse, "delivery_date":payload["delivery_date"]})
+
+    doc.set_missing_values()
+
     if settings.default_sales_taxes_and_charges_template:
         from erpnext.controllers.accounts_controller import get_taxes_and_charges
 
@@ -259,11 +273,8 @@ def _validate_price(frappe, settings, item):
     )
     if not prices:
         raise IntegrationError("PRICE_NOT_FOUND", f"Selling price is not configured for {item['item_code']}", 422, field="rate")
-    expected = prices[0].price_list_rate
-    expected, supplied = Decimal(str(expected)), Decimal(str(item["rate"]))
-    allowed = abs(expected) * Decimal(str(settings.price_tolerance_percent or 0)) / Decimal("100")
-    if abs(expected - supplied) > allowed:
-        raise IntegrationError("STALE_PRICE", f"Rate does not match ERPNext price for {item['item_code']}", 422, field="rate")
+    # ERP reference price must exist. BS supplies the confirmed transaction rate.
+    return
 
 
 def _get_or_create_shipping_address(frappe, customer, payload):

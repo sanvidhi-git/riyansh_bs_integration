@@ -15,7 +15,7 @@ class TestPayloadContracts(unittest.TestCase):
     def valid_order_payload():
         return {
             "bs_order_id": "BS-1",
-            "distributor_id": "RM1",
+            "customer_id": "RM1",
             "order_datetime": "2026-09-22T10:00:00+05:30",
             "warehouse_code": "SANGAMNER",
             "currency": "INR",
@@ -53,7 +53,7 @@ class TestPayloadContracts(unittest.TestCase):
             "status": "APPROVED",
             "bs_credit_note_id": "CN-1",
             "bs_order_id": "BS-1",
-            "distributor_id": "RM1",
+            "customer_id": "RM1",
             "original_invoice_reference": "SINV-1",
             "credit_note_datetime": "2026-09-22T10:00:00+05:30",
             "reason_code": "CUSTOMER_RETURN",
@@ -221,7 +221,7 @@ class TestPayloadContracts(unittest.TestCase):
 
     def test_order_rejects_mismatched_grand_total(self):
         payload = {
-            "bs_order_id": "BS-1", "distributor_id": "RM1", "order_datetime": "2026-09-22T10:00:00+05:30",
+            "bs_order_id": "BS-1", "customer_id": "RM1", "order_datetime": "2026-09-22T10:00:00+05:30",
             "warehouse_code": "SANGAMNER", "currency": "INR", "payment_status": "PAID", "payment_reference": "PAY-1",
             "shipping_address": {"name":"A","mobile":"9876543210","address_line_1":"Road","city":"Mouda","state":"Maharashtra","pincode":"441104"},
             "items": [{"item_code":"ITEM-1","qty":2,"uom":"Nos","rate":100,"discount_amount":0,"taxable_amount":200,"gst_rate":18,"tax_amount":36,"line_total":236}],

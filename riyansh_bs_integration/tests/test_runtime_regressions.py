@@ -275,7 +275,7 @@ class TestRuntimeRegressions(unittest.TestCase):
     def test_order_derives_delivery_date_from_order_datetime(self):
         payload = {
             "bs_order_id": "BS-1",
-            "distributor_id": "RM1",
+            "customer_id": "RM1",
             "order_datetime": "2026-09-24T10:00:00+05:30",
             "warehouse_code": "SANGAMNER",
             "currency": "INR",
@@ -307,10 +307,10 @@ class TestRuntimeRegressions(unittest.TestCase):
         result = validate_order_payload(payload)
         self.assertEqual(result["delivery_date"], "2026-09-24")
 
-    def test_unverified_distributor_is_rejected_before_tax_dependencies(self):
+    def test_unknown_customer_is_rejected_before_tax_dependencies(self):
         payload = {
             "bs_order_id": "BS-NEG-1",
-            "distributor_id": "RM-NOT-VERIFIED",
+            "customer_id": "RM-NOT-FOUND",
             "order_datetime": "2026-09-24T10:00:00+05:30",
             "warehouse_code": "SANGAMNER",
             "currency": "INR",
@@ -362,7 +362,7 @@ class TestRuntimeRegressions(unittest.TestCase):
                     sys.modules.pop(name, None)
                 else:
                     sys.modules[name] = module
-        self.assertEqual(raised.exception.code, "DISTRIBUTOR_NOT_VERIFIED")
+        self.assertEqual(raised.exception.code, "CUSTOMER_NOT_FOUND")
 
     def test_invalid_warehouse_mapping_returns_contract_error(self):
         fake_frappe = SimpleNamespace()
@@ -400,7 +400,7 @@ class TestRuntimeRegressions(unittest.TestCase):
             "status": "APPROVED",
             "bs_credit_note_id": "CN-1",
             "bs_order_id": "BS-1",
-            "distributor_id": "RM1",
+            "customer_id": "RM1",
             "original_invoice_reference": "SINV-1",
             "credit_note_datetime": "2026-09-24 14:00:00",
             "reason_code": "CUSTOMER_RETURN",
@@ -429,7 +429,7 @@ class TestRuntimeRegressions(unittest.TestCase):
             "status": "APPROVED",
             "bs_credit_note_id": "CN-1",
             "bs_order_id": "BS-1",
-            "distributor_id": "RM1",
+            "customer_id": "RM1",
             "original_invoice_reference": "SINV-MISSING",
             "credit_note_datetime": "2026-09-24T14:00:00+05:30",
             "reason_code": "CUSTOMER_RETURN",
