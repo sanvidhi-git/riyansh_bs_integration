@@ -25,77 +25,190 @@ def remaining_return_quantity(original_qty, returned_quantities):
 
 
 def validate_credit_note_payload(payload):
+    """Validate the agreed minimal BS API 4 contract."""
     if not isinstance(payload, dict):
-        raise IntegrationError("INVALID_JSON", "Request body must be a JSON object", 400)
-    if str(payload.get("status", "")).upper() != "APPROVED":
-        raise IntegrationError("RETURN_NOT_APPROVED", "Only APPROVED credit notes are accepted", 422, field="status")
-    for field in ("bs_credit_note_id", "bs_order_id", "customer_id", "original_invoice_reference", "credit_note_datetime", "reason_code", "reason", "warehouse_code", "items", "taxable_value", "total_tax", "grand_total"):
+        raise IntegrationError(
+            "INVALID_JSON",
+            "Request body must be a JSON object",
+            400,
+        )
+
+    payload = dict(payload)
+
+    for field in (
+        "bs_credit_note_id",
+        "bs_order_id",
+        "customer_id",
+        "credit_note_datetime",
+        "warehouse_code",
+        "items",
+    ):
         require(payload, field)
+
+    for field in (
+        "bs_credit_note_id",
+        "bs_order_id",
+        "customer_id",
+        "warehouse_code",
+    ):
+        value = payload[field]
+        if not isinstance(value, str) or not value.strip():
+            raise IntegrationError(
+                "INVALID_FIELD",
+                f"{field} must be a nonempty string",
+                422,
+                field=field,
+            )
+        payload[field] = value.strip()
+
+    status = payload.get("status", "APPROVED")
+    if status is None or str(status).strip().upper() != "APPROVED":
+        raise IntegrationError(
+            "RETURN_NOT_APPROVED",
+            "Only APPROVED credit notes are accepted",
+            422,
+            field="status",
+        )
+    payload["status"] = "APPROVED"
+
+    reason = payload.get("reason")
+    if reason is None or reason == "":
+        reason = "Customer return approved"
+    if not isinstance(reason, str) or not reason.strip():
+        raise IntegrationError(
+            "INVALID_REASON",
+            "reason must be a nonempty string",
+            422,
+            field="reason",
+        )
+    payload["reason"] = reason.strip()
+    payload["reason_code"] = "CUSTOMER_RETURN"
+
     try:
-        credit_note_datetime = datetime.fromisoformat(str(payload["credit_note_datetime"]))
-        if credit_note_datetime.tzinfo is None:
+        dt = datetime.fromisoformat(
+            str(payload["credit_note_datetime"])
+        )
+        if dt.tzinfo is None or dt.utcoffset() is None:
             raise ValueError
-    except ValueError as exc:
+    except (ValueError, TypeError, OverflowError) as exc:
         raise IntegrationError(
             "INVALID_DATETIME",
-            "credit_note_datetime must include timezone",
+            "credit_note_datetime must include a valid timezone",
             422,
             field="credit_note_datetime",
         ) from exc
+
+    payload["credit_note_datetime"] = dt.isoformat()
+
     if not isinstance(payload["items"], list) or not payload["items"]:
-        raise IntegrationError("EMPTY_ITEMS", "At least one credit-note item is required", 422, field="items")
-    taxable = tax = total = Decimal("0")
+        raise IntegrationError(
+            "EMPTY_ITEMS",
+            "At least one credit-note item is required",
+            422,
+            field="items",
+        )
+
+    normalized = []
     for index, item in enumerate(payload["items"]):
-        require(item, "item_code")
-        qty = _number(require(item, "qty"), f"items[{index}].qty")
-        rate = _number(require(item, "rate"), f"items[{index}].rate")
-        item_taxable = _number(require(item, "taxable_amount"), f"items[{index}].taxable_amount")
-        item_tax = _number(require(item, "tax_amount"), f"items[{index}].tax_amount")
-        item_total = _number(require(item, "line_total"), f"items[{index}].line_total")
-        if qty <= 0 or rate < 0 or item_taxable < 0 or item_tax < 0 or item_total < 0 or abs(item_total - item_taxable - item_tax) > Decimal("0.02"):
-            raise IntegrationError("CREDIT_LINE_MISMATCH", "Credit-note line does not reconcile", 422, field=f"items[{index}]")
-        taxable += item_taxable; tax += item_tax; total += item_total
-    taxable_value = _number(payload["taxable_value"], "taxable_value")
-    total_tax = _number(payload["total_tax"], "total_tax")
-    grand_total = _number(payload["grand_total"], "grand_total")
-    if taxable_value < 0 or total_tax < 0 or grand_total < 0:
-        raise IntegrationError("INVALID_AMOUNT", "Credit-note totals cannot be negative", 422)
-    if abs(taxable - taxable_value) > Decimal("0.02") or abs(tax - total_tax) > Decimal("0.02") or abs(total - grand_total) > Decimal("0.02"):
-        raise IntegrationError("CREDIT_TOTAL_MISMATCH", "Credit-note totals do not reconcile", 422)
+        if not isinstance(item, dict):
+            raise IntegrationError(
+                "INVALID_ITEM",
+                "Each item must be an object",
+                422,
+                field=f"items[{index}]",
+            )
+
+        code = require(item, "item_code")
+        if not isinstance(code, str) or not code.strip():
+            raise IntegrationError(
+                "INVALID_ITEM_CODE",
+                "item_code must be a nonempty string",
+                422,
+                field=f"items[{index}].item_code",
+            )
+
+        try:
+            raw_qty = require(item, "qty")
+            raw_rate = require(item, "rate")
+            if isinstance(raw_qty, bool) or isinstance(raw_rate, bool):
+                raise InvalidOperation
+
+            qty = Decimal(str(raw_qty))
+            rate = Decimal(str(raw_rate))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise IntegrationError(
+                "INVALID_ITEM_AMOUNT",
+                "Quantity or rate is invalid",
+                422,
+                field=f"items[{index}]",
+            ) from exc
+
+        if (
+            not qty.is_finite()
+            or not rate.is_finite()
+            or qty <= 0
+            or rate < 0
+        ):
+            raise IntegrationError(
+                "INVALID_ITEM_AMOUNT",
+                "Quantity must be positive and rate nonnegative",
+                422,
+                field=f"items[{index}]",
+            )
+
+        normalized.append({
+            "item_code": code.strip(),
+            "qty": str(qty),
+            "rate": str(rate),
+        })
+
+    payload["items"] = normalized
+
+    # These old BS fields are no longer authoritative.
+    for field in (
+        "original_invoice_reference",
+        "taxable_value",
+        "total_tax",
+        "grand_total",
+    ):
+        payload.pop(field, None)
+
     return payload
 
 
 def create_credit_note(payload, correlation_id):
+    """Create a standalone draft return against a verified BS order."""
     import frappe
     from frappe.utils import get_system_timezone
 
+    from riyansh_bs_integration.services.gst_service import (
+        set_document_gst,
+        get_customer_address,
+    )
+    from riyansh_bs_integration.services.order_service import (
+        _resolve_warehouse,
+    )
+
     payload = validate_credit_note_payload(payload)
     fingerprint = request_fingerprint(payload)
-    existing = frappe.db.get_value("Sales Invoice", {"custom_bs_credit_note_id":payload["bs_credit_note_id"]}, ["name", "custom_bs_request_fingerprint"], as_dict=True)
+
+    existing = frappe.db.get_value(
+        "Sales Invoice",
+        {"custom_bs_credit_note_id": payload["bs_credit_note_id"]},
+        ["name", "custom_bs_request_fingerprint"],
+        as_dict=True,
+    )
     if existing:
         if existing.custom_bs_request_fingerprint != fingerprint:
-            raise ConflictError("CREDIT_NOTE_ID_CONFLICT", "The BS credit-note ID already exists with different data", field="bs_credit_note_id")
+            raise ConflictError(
+                "CREDIT_NOTE_ID_CONFLICT",
+                "Credit-note ID already exists with different data",
+                field="bs_credit_note_id",
+            )
         return {"credit_note": existing.name, "duplicate": True}, False
-    if not frappe.db.exists("Sales Invoice", payload["original_invoice_reference"]):
-        raise IntegrationError(
-            "INVOICE_NOT_FOUND",
-            "Original Sales Invoice does not exist",
-            404,
-            field="original_invoice_reference",
-        )
-    from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
-    # Serialize all returns against the same invoice. This prevents two
-    # concurrent requests with different BS IDs from both consuming the same
-    # remaining quantity.
-    frappe.db.sql(
-        "select name from `tabSales Invoice` where name = %s for update",
-        (payload["original_invoice_reference"],),
-    )
-    original = frappe.get_doc("Sales Invoice", payload["original_invoice_reference"])
-    if original.docstatus != 1:
-        raise IntegrationError("INVOICE_NOT_SUBMITTED", "Original Sales Invoice must be submitted", 422)
-    if original.custom_bs_order_id and original.custom_bs_order_id != payload["bs_order_id"]:
-        raise IntegrationError("ORDER_REFERENCE_MISMATCH", "BS order ID does not match the original invoice", 422, field="bs_order_id")
+
+    settings = frappe.get_cached_doc("BS Integration Settings")
+
     customer = frappe.db.get_value(
         "Customer",
         {"custom_distributor_id": payload["customer_id"]},
@@ -104,104 +217,242 @@ def create_credit_note(payload, correlation_id):
     if not customer:
         raise IntegrationError(
             "CUSTOMER_NOT_FOUND",
-            "Customer ID does not exist in ERPNext",
+            "Customer ID does not exist",
             422,
             field="customer_id",
         )
 
-    if customer != original.customer:
+    order_name = frappe.db.get_value(
+        "Sales Order",
+        {"custom_bs_order_id": payload["bs_order_id"]},
+        "name",
+    )
+    if not order_name:
         raise IntegrationError(
-            "CUSTOMER_MISMATCH",
-            "Customer does not match the original invoice",
+            "ORDER_NOT_FOUND",
+            "Original BS Sales Order is not available in ERPNext",
             422,
-            field="customer_id",
+            field="bs_order_id",
         )
 
-    settings = frappe.get_cached_doc("BS Integration Settings")
-    from riyansh_bs_integration.services.order_service import _resolve_warehouse
-    warehouse = _resolve_warehouse(frappe, settings, payload["warehouse_code"])
-    requested = {}
-    for row in payload["items"]:
-        item_code = row["item_code"]
-        requested[item_code] = requested.get(item_code, Decimal("0")) + Decimal(str(row["qty"]))
-    original_qty = {}
+    # Serialize different returns consuming quantities from one BS order.
+    frappe.db.sql(
+        "SELECT name FROM `tabSales Order` WHERE name = %s FOR UPDATE",
+        (order_name,),
+    )
+
+    original = frappe.get_doc("Sales Order", order_name)
+
+    if original.docstatus == 2:
+        raise IntegrationError(
+            "ORDER_CANCELLED",
+            "Cannot return against a cancelled order",
+            422,
+        )
+
+    if original.customer != customer or original.company != settings.company:
+        raise IntegrationError(
+            "ORDER_CUSTOMER_MISMATCH",
+            "Order customer or company does not match",
+            422,
+        )
+
+    warehouse = _resolve_warehouse(
+        frappe, settings, payload["warehouse_code"]
+    )
+
+    available = {}
     original_rates = {}
-    original_warehouses = {}
+    original_rows = {}
 
     for row in original.items:
-        original_qty[row.item_code] = original_qty.get(row.item_code, Decimal("0")) + Decimal(str(row.qty))
-        original_rates.setdefault(row.item_code, Decimal(str(row.rate)))
-        if row.warehouse:
-            original_warehouses.setdefault(row.item_code, set()).add(row.warehouse)
+        if row.warehouse != warehouse:
+            continue
 
-    for item_code in requested:
-        warehouses = original_warehouses.get(item_code, set())
-        if warehouses and warehouse not in warehouses:
+        code = row.item_code
+        available[code] = available.get(code, Decimal("0")) + Decimal(
+            str(row.qty)
+        )
+
+        rate = Decimal(str(row.rate))
+        if code in original_rates and original_rates[code] != rate:
             raise IntegrationError(
-                "WAREHOUSE_MISMATCH",
-                f"Warehouse does not match original invoice for {item_code}",
+                "AMBIGUOUS_ORDER_RATE",
+                f"Original order contains multiple rates for {code}",
                 422,
-                field="warehouse_code",
             )
-    return_parents = set(
-        frappe.get_all(
-            "Sales Invoice",
-            filters={"return_against": original.name, "docstatus": ["in", [0, 1]], "is_return": 1},
-            pluck="name",
-        )
-    )
-    submitted_returns = []
-    if return_parents:
-        submitted_returns = frappe.get_all(
-            "Sales Invoice Item",
-            filters={
-                "parenttype": "Sales Invoice",
-                "parent": ["in", list(return_parents)],
-                "item_code": ["in", list(requested)],
-            },
-            fields=["item_code", "qty", "parent"],
-        )
-    returned = {}
-    for row in submitted_returns:
-        if row.parent in return_parents:
-            returned.setdefault(row.item_code, []).append(row.qty)
-    for item_code, qty in requested.items():
-        remaining = remaining_return_quantity(original_qty.get(item_code, 0), returned.get(item_code, []))
-        if item_code not in original_qty or qty > remaining:
-            raise IntegrationError("RETURN_QTY_EXCEEDED", f"Return quantity exceeds invoice quantity for {item_code}", 422)
+
+        original_rates[code] = rate
+        original_rows[code] = row
+
+    requested = {}
     for row in payload["items"]:
-        item_code = row["item_code"]
-        if item_code in original_rates and abs(Decimal(str(row["rate"])) - original_rates[item_code]) > Decimal("0.02"):
-            raise IntegrationError("RETURN_RATE_MISMATCH", f"Return rate differs from the original invoice for {item_code}", 422, field="rate")
-    credit = make_sales_return(original.name)
-    selected_rows = []
-    seen_items = set()
-    for row in credit.items:
-        if row.item_code in requested and row.item_code not in seen_items:
-            selected_rows.append(row)
-            seen_items.add(row.item_code)
-    credit.items = selected_rows
-    for row in credit.items:
-        row.qty = -requested[row.item_code]
-        row.rate = original_rates[row.item_code]
+        code = row["item_code"]
+        requested[code] = requested.get(code, Decimal("0")) + Decimal(
+            str(row["qty"])
+        )
+
+        if code not in available:
+            raise IntegrationError(
+                "RETURN_ITEM_NOT_ORDERED",
+                f"Item {code} is not in this order and warehouse",
+                422,
+            )
+
+        if abs(
+            Decimal(str(row["rate"])) - original_rates[code]
+        ) > Decimal("0.02"):
+            raise IntegrationError(
+                "RETURN_RATE_MISMATCH",
+                f"Return rate differs from original order for {code}",
+                422,
+                field="rate",
+            )
+
+    previous_rows = frappe.db.sql(
+        """
+        SELECT sii.item_code, sii.qty
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        WHERE si.custom_bs_order_id = %s
+          AND si.is_return = 1
+          AND si.docstatus IN (0, 1)
+          AND sii.warehouse = %s
+        """,
+        (payload["bs_order_id"], warehouse),
+        as_dict=True,
+    )
+
+    already_returned = {}
+    for row in previous_rows:
+        code = row.item_code
+        already_returned[code] = (
+            already_returned.get(code, Decimal("0"))
+            + abs(Decimal(str(row.qty)))
+        )
+
+    for code, qty in requested.items():
+        remaining = available[code] - already_returned.get(
+            code, Decimal("0")
+        )
+        if qty > remaining:
+            raise IntegrationError(
+                "RETURN_QTY_EXCEEDED",
+                f"Return exceeds remaining order quantity for {code}",
+                422,
+            )
+
+    address_name = (
+        original.shipping_address_name
+        or original.customer_address
+    )
+    if not address_name:
+        raise IntegrationError(
+            "ORDER_ADDRESS_MISSING",
+            "Original order has no verified customer address",
+            422,
+        )
+
+    get_customer_address(frappe, customer, address_name)
+
+    dt = to_database_datetime(
+        payload["credit_note_datetime"],
+        get_system_timezone(),
+        "credit_note_datetime",
+    )
+
+    credit = frappe.new_doc("Sales Invoice")
+    credit.company = settings.company
+    credit.customer = customer
+    credit.is_return = 1
+    credit.return_against = None
     credit.update_stock = 0
+    credit.currency = "INR"
+    credit.selling_price_list = settings.default_price_list
+    credit.posting_date = dt.date().isoformat()
+    credit.set_posting_time = 1
+    credit.posting_time = dt.strftime("%H:%M:%S")
+    credit.due_date = dt.date().isoformat()
+    credit.customer_address = address_name
+    credit.shipping_address_name = address_name
+    credit.ignore_pricing_rule = 1
+
     credit.custom_bs_credit_note_id = payload["bs_credit_note_id"]
     credit.custom_bs_order_id = payload["bs_order_id"]
     credit.custom_bs_source_datetime = to_database_datetime(
-        payload["credit_note_datetime"], get_system_timezone(), "credit_note_datetime"
+        payload["credit_note_datetime"],
+        get_system_timezone(),
+        "credit_note_datetime",
     )
     credit.custom_bs_request_fingerprint = fingerprint
-    credit.remarks = f"{payload['reason_code']}: {payload['reason']}"
+    credit.remarks = payload["reason"]
+
+    for row in payload["items"]:
+        source = original_rows[row["item_code"]]
+
+        credit.append("items", {
+            "item_code": row["item_code"],
+            "qty": -float(Decimal(str(row["qty"]))),
+            "rate": float(Decimal(str(row["rate"]))),
+            "uom": source.uom,
+            "conversion_factor": source.conversion_factor or 1,
+            "warehouse": warehouse,
+        })
+
+    credit.set_missing_values()
+
+    set_document_gst(
+        frappe,
+        credit,
+        settings.company,
+        customer,
+        address_name,
+        credit.posting_date,
+    )
+
     try:
         credit.insert(ignore_permissions=True)
-    except frappe.UniqueValidationError:
-        winner = frappe.db.get_value("Sales Invoice", {"custom_bs_credit_note_id":payload["bs_credit_note_id"]}, ["name", "custom_bs_request_fingerprint"], as_dict=True)
-        if winner and winner.custom_bs_request_fingerprint == fingerprint:
-            return {"credit_note": winner.name, "duplicate": True}, False
-        raise ConflictError("CREDIT_NOTE_ID_CONFLICT", "The BS credit-note ID already exists with different data", field="bs_credit_note_id")
-    tolerance = Decimal(str(settings.amount_tolerance or "0.02"))
-    if abs(abs(Decimal(str(credit.grand_total))) - Decimal(str(payload["grand_total"]))) > tolerance:
-        raise IntegrationError("ERP_CREDIT_TOTAL_MISMATCH", "ERPNext calculated credit total does not match BS grand total", 422)
-    if settings.auto_submit_credit_note:
-        credit.submit()
-    return {"credit_note": credit.name, "duplicate": False, "docstatus": credit.docstatus}, True
+    except (
+            frappe.UniqueValidationError,
+            frappe.DuplicateEntryError,
+        ):
+            # Roll back the losing insert transaction before reading
+            # the committed document created by another request.
+            frappe.db.rollback()
+
+            winner = frappe.db.get_value(
+                "Sales Invoice",
+                {"custom_bs_credit_note_id": payload["bs_credit_note_id"]},
+                ["name", "custom_bs_request_fingerprint"],
+                as_dict=True,
+            )
+
+            if not winner:
+                # The unique violation may concern another field.
+                # Preserve the original database exception.
+                raise
+
+            if winner.custom_bs_request_fingerprint != fingerprint:
+                raise ConflictError(
+                    "CREDIT_NOTE_ID_CONFLICT",
+                    "Credit-note ID already exists with different data",
+                    field="bs_credit_note_id",
+                )
+
+            return {
+                "credit_note": winner.name,
+                "duplicate": True,
+            }, False
+
+    if credit.docstatus != 0 or credit.update_stock:
+        raise IntegrationError(
+            "CREDIT_NOTE_NOT_DRAFT",
+            "Credit Note must remain Draft without stock posting",
+            500,
+        )
+
+    return {
+        "credit_note": credit.name,
+        "duplicate": False,
+        "docstatus": credit.docstatus,
+    }, True
