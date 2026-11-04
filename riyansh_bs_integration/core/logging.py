@@ -84,6 +84,37 @@ def _write_api_log_safely(**values):
         return None
 
 
+
+def _inbound_payload(args, kwargs):
+    """Read explicit payload first, otherwise the raw JSON request."""
+    payload = kwargs.get("payload")
+
+    if payload is None and args:
+        payload = args[0]
+
+    if payload is not None:
+        return payload
+
+    try:
+        import frappe
+        return frappe.request.get_json(silent=True) or {}
+    except Exception:
+        # Logging must not replace the API handler's response.
+        return {}
+
+
+def _response_http_status():
+    """Read the HTTP status already selected by the endpoint."""
+    try:
+        import frappe
+        return int(
+            getattr(frappe.local.response, "http_status_code", 200)
+            or 200
+        )
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return 200
+
+
 def integration_endpoint(interface: str, reference_key: str | None = None):
     """Wrap a whitelisted handler with access checks, envelopes and masked logging."""
 
@@ -94,7 +125,7 @@ def integration_endpoint(interface: str, reference_key: str | None = None):
 
             correlation_id = kwargs.pop("correlation_id", None) or new_correlation_id()
             started = time.monotonic()
-            payload = kwargs.get("payload") or (args[0] if args else {}) or {}
+            payload = _inbound_payload(args, kwargs)
             inspected_payload = safe_payload(payload)
             reference = inspected_payload.get(reference_key) if reference_key and isinstance(inspected_payload, dict) else None
             try:
@@ -107,6 +138,7 @@ def integration_endpoint(interface: str, reference_key: str | None = None):
                     reference=reference,
                     request_body=inspected_payload,
                     response_body=result,
+                    http_status=_response_http_status(),
                     duration_ms=int((time.monotonic() - started) * 1000),
                     status="Success",
                 )
