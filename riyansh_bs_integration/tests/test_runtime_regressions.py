@@ -149,10 +149,15 @@ class TestRuntimeRegressions(unittest.TestCase):
 
     def test_credit_note_locks_original_invoice_and_counts_drafts(self):
         from pathlib import Path
-
-        source = (Path(__file__).resolve().parents[1] / "services/credit_note_service.py").read_text()
-        self.assertIn("for update", source.lower())
-        self.assertIn('"docstatus": ["in", [0, 1]]', source)
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "services/credit_note_service.py"
+        ).read_text()
+        self.assertIn("FOR UPDATE", source)
+        self.assertIn("si.docstatus IN (0, 1)", source)
+        self.assertIn("si.custom_bs_order_id = %s", source)
+        self.assertIn("sii.warehouse = %s", source)
+        self.assertIn("RETURN_QTY_EXCEEDED", source)
 
 
     def test_kyc_pass_creates_supplier_only_and_queues_callback(self):
@@ -273,96 +278,36 @@ class TestRuntimeRegressions(unittest.TestCase):
                     sys.modules[name] = module
 
     def test_order_derives_delivery_date_from_order_datetime(self):
-        payload = {
-            "bs_order_id": "BS-1",
-            "customer_id": "RM1",
-            "order_datetime": "2026-09-24T10:00:00+05:30",
-            "warehouse_code": "SANGAMNER",
-            "currency": "INR",
-            "payment_status": "PAID",
-            "payment_reference": "PAY-1",
-            "shipping_address": {
-                "name": "A",
-                "mobile": "9876543210",
-                "address_line_1": "Road",
-                "city": "Pune",
-                "state": "Maharashtra",
-                "pincode": "411001",
-            },
-            "items": [
-                {
-                    "item_code": "ITEM-1",
-                    "qty": 1,
-                    "uom": "Nos",
-                    "rate": 100,
-                    "taxable_amount": 100,
-                    "tax_amount": 0,
-                    "line_total": 100,
-                }
-            ],
-            "taxable_value": 100,
-            "total_tax": 0,
-            "grand_total": 100,
-        }
+        from riyansh_bs_integration.tests.api34_fixtures import order_payload
+        payload = order_payload()
+        payload["order_datetime"] = "2026-09-24T10:00:00+05:30"
         result = validate_order_payload(payload)
         self.assertEqual(result["delivery_date"], "2026-09-24")
 
     def test_unknown_customer_is_rejected_before_tax_dependencies(self):
-        payload = {
-            "bs_order_id": "BS-NEG-1",
-            "customer_id": "RM-NOT-FOUND",
-            "order_datetime": "2026-09-24T10:00:00+05:30",
-            "warehouse_code": "SANGAMNER",
-            "currency": "INR",
-            "payment_status": "PAID",
-            "payment_reference": "PAY-1",
-            "shipping_address": {
-                "name": "A",
-                "mobile": "9876543210",
-                "address_line_1": "Road",
-                "city": "Pune",
-                "state": "Maharashtra",
-                "pincode": "411001",
-            },
-            "items": [
-                {
-                    "item_code": "ITEM-1",
-                    "qty": 1,
-                    "uom": "Nos",
-                    "rate": 100,
-                    "taxable_amount": 100,
-                    "tax_amount": 0,
-                    "line_total": 100,
-                }
-            ],
-            "taxable_value": 100,
-            "total_tax": 0,
-            "shipping_amount": 0,
-            "grand_total": 100,
-        }
+        from unittest.mock import patch
+        from riyansh_bs_integration.tests.api34_fixtures import order_payload
 
-        class _DB:
-            @staticmethod
-            def get_value(doctype, filters, fields=None, as_dict=False):
-                return None
+        payload = order_payload()
+        payload["customer_id"] = "RM-NOT-FOUND"
 
         fake_frappe = types.ModuleType("frappe")
-        fake_frappe.db = _DB()
+        fake_frappe.db = SimpleNamespace(
+            get_value=lambda *args, **kwargs: None
+        )
         fake_utils = types.ModuleType("frappe.utils")
         fake_utils.get_system_timezone = lambda: "Asia/Kolkata"
-        saved_modules = {name: sys.modules.get(name) for name in ("frappe", "frappe.utils")}
-        try:
-            sys.modules["frappe"] = fake_frappe
-            sys.modules["frappe.utils"] = fake_utils
+
+        with patch.dict(sys.modules, {
+            "frappe": fake_frappe,
+            "frappe.utils": fake_utils,
+        }):
             with self.assertRaises(IntegrationError) as raised:
                 create_sales_order(payload, "COR-TEST")
-        finally:
-            for name, module in saved_modules.items():
-                if module is None:
-                    sys.modules.pop(name, None)
-                else:
-                    sys.modules[name] = module
-        self.assertEqual(raised.exception.code, "CUSTOMER_NOT_FOUND")
+
+        self.assertEqual(
+            raised.exception.code, "CUSTOMER_NOT_FOUND"
+        )
 
     def test_invalid_warehouse_mapping_returns_contract_error(self):
         fake_frappe = SimpleNamespace()
@@ -425,73 +370,33 @@ class TestRuntimeRegressions(unittest.TestCase):
         self.assertEqual(raised.exception.code, "INVALID_DATETIME")
 
     def test_missing_original_invoice_is_a_contract_error(self):
-        payload = {
-            "status": "APPROVED",
-            "bs_credit_note_id": "CN-1",
-            "bs_order_id": "BS-1",
-            "customer_id": "RM1",
-            "original_invoice_reference": "SINV-MISSING",
-            "credit_note_datetime": "2026-09-24T14:00:00+05:30",
-            "reason_code": "CUSTOMER_RETURN",
-            "reason": "Test return",
-            "warehouse_code": "SANGAMNER",
-            "items": [
-                {
-                    "item_code": "ITEM-1",
-                    "qty": 1,
-                    "rate": 100,
-                    "taxable_amount": 100,
-                    "tax_amount": 0,
-                    "line_total": 100,
-                }
-            ],
-            "taxable_value": 100,
-            "total_tax": 0,
-            "grand_total": 100,
-        }
+        from unittest.mock import patch
+        from riyansh_bs_integration.tests.api34_fixtures import credit_payload
 
-        class _DB:
-            @staticmethod
-            def get_value(*args, **kwargs):
-                return None
+        payload = credit_payload()
 
-            @staticmethod
-            def exists(doctype, name):
-                return False
+        def lookup(doctype, *args, **kwargs):
+            if doctype == "Customer":
+                return "Test Customer"
+            return None
 
         fake_frappe = types.ModuleType("frappe")
-        fake_frappe.db = _DB()
-        fake_sales_invoice = types.ModuleType(
-            "erpnext.accounts.doctype.sales_invoice.sales_invoice"
+        fake_frappe.db = SimpleNamespace(get_value=lookup)
+        fake_frappe.get_cached_doc = lambda name: SimpleNamespace(
+            company="Riyansh Multitrade Private Limited"
         )
-        fake_sales_invoice.make_sales_return = lambda name: None
+
         fake_utils = types.ModuleType("frappe.utils")
         fake_utils.get_system_timezone = lambda: "Asia/Kolkata"
-        module_names = (
-            "frappe",
-            "frappe.utils",
-            "erpnext",
-            "erpnext.accounts",
-            "erpnext.accounts.doctype",
-            "erpnext.accounts.doctype.sales_invoice",
-            "erpnext.accounts.doctype.sales_invoice.sales_invoice",
-        )
-        saved_modules = {name: sys.modules.get(name) for name in module_names}
-        try:
-            sys.modules["frappe"] = fake_frappe
-            sys.modules["frappe.utils"] = fake_utils
-            for name in module_names[2:-1]:
-                sys.modules[name] = types.ModuleType(name)
-            sys.modules[module_names[-1]] = fake_sales_invoice
+
+        with patch.dict(sys.modules, {
+            "frappe": fake_frappe,
+            "frappe.utils": fake_utils,
+        }):
             with self.assertRaises(IntegrationError) as raised:
                 create_credit_note(payload, "COR-TEST")
-        finally:
-            for name, module in saved_modules.items():
-                if module is None:
-                    sys.modules.pop(name, None)
-                else:
-                    sys.modules[name] = module
-        self.assertEqual(raised.exception.code, "INVOICE_NOT_FOUND")
+
+        self.assertEqual(raised.exception.code, "ORDER_NOT_FOUND")
 
     def test_changed_kyc_decision_creates_a_new_outbound_event(self):
         onboarding = SimpleNamespace(

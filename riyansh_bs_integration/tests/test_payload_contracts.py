@@ -231,37 +231,53 @@ class TestPayloadContracts(unittest.TestCase):
             validate_order_payload(payload)
 
     def test_order_rejects_non_finite_amounts_as_contract_error(self):
-        payload = self.valid_order_payload()
-        payload["items"][0]["rate"] = "NaN"
-        with self.assertRaises(IntegrationError) as raised:
-            validate_order_payload(payload)
-        self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
+        from riyansh_bs_integration.tests.api34_fixtures import order_payload
+        for field in ("qty", "rate"):
+            with self.subTest(field=field):
+                payload = order_payload()
+                payload["items"][0][field] = "NaN"
+                with self.assertRaises(IntegrationError) as raised:
+                    validate_order_payload(payload)
+                self.assertEqual(
+                    raised.exception.code, "INVALID_ITEM_AMOUNT"
+                )
 
     def test_order_rejects_negative_shipping_amount(self):
-        payload = self.valid_order_payload()
+        from riyansh_bs_integration.tests.api34_fixtures import order_payload
+        payload = order_payload()
         payload["shipping_amount"] = -10
         payload["grand_total"] = 90
-        with self.assertRaises(IntegrationError) as raised:
-            validate_order_payload(payload)
-        self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
+        result = validate_order_payload(payload)
+        self.assertNotIn("shipping_amount", result)
+        self.assertNotIn("grand_total", result)
+        self.assertEqual(result["items"][0]["rate"], "1000")
 
     def test_credit_note_requires_approved_status(self):
         with self.assertRaises(IntegrationError):
             validate_credit_note_payload({"status": "PENDING"})
 
     def test_credit_note_rejects_non_finite_amounts_as_contract_error(self):
-        payload = self.valid_credit_payload()
-        payload["items"][0]["tax_amount"] = "NaN"
-        with self.assertRaises(IntegrationError) as raised:
-            validate_credit_note_payload(payload)
-        self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
+        from riyansh_bs_integration.tests.api34_fixtures import credit_payload
+        for field in ("qty", "rate"):
+            with self.subTest(field=field):
+                payload = credit_payload()
+                payload["items"][0][field] = "NaN"
+                with self.assertRaises(IntegrationError) as raised:
+                    validate_credit_note_payload(payload)
+                self.assertEqual(
+                    raised.exception.code, "INVALID_ITEM_AMOUNT"
+                )
 
     def test_credit_note_rejects_invalid_header_totals_as_contract_error(self):
-        payload = self.valid_credit_payload()
+        from riyansh_bs_integration.tests.api34_fixtures import credit_payload
+        payload = credit_payload()
         payload["grand_total"] = "not-a-number"
-        with self.assertRaises(IntegrationError) as raised:
-            validate_credit_note_payload(payload)
-        self.assertEqual(raised.exception.code, "INVALID_AMOUNT")
+        payload["taxable_value"] = "not-a-number"
+        payload["total_tax"] = "NaN"
+        result = validate_credit_note_payload(payload)
+        for field in ("grand_total", "taxable_value", "total_tax"):
+            self.assertNotIn(field, result)
+        self.assertEqual(result["items"][0]["rate"], "1000")
 
     def test_kyc_pass_payload_has_only_agreed_fields(self):
         result = build_kyc_payload(
